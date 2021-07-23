@@ -1,0 +1,10 @@
+/.vscode
+/5_json_insert_frage.sql
+/Cargo.lock
+/ae.sql
+/curl_frage_add.sh
+/frage_json.json
+/identity.pfx
+/muscle.ini
+/openapi_ap.json
+/target
