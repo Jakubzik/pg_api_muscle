@@ -20,6 +20,7 @@ pub struct Request {
     pub method: RequestMethod,
     pub method_reroute: RequestMethod,  // Do I need this? @TODO ... For POST to SQL procedures that need GET syntax from the response
     pub ip_address: String,
+    pub is_shutdown: bool,
     payload: Value
 }
 
@@ -86,7 +87,7 @@ impl Request{
         let url_plus_par: (&str, &str) = Request::get_url_plus_parms( &s_uri );
         let ct_payload_auth: (&str, &str, &str) = Request::get_content_payload_auth( &s_req );
 
-        if Request::get_method( &s_first_line ) == RequestMethod::SHUTDOWN {panic!("Shutdown requested");}
+        let b_shut = Request::get_method( &s_first_line ) == RequestMethod::SHUTDOWN;
         
         let claims = Request::get_auth_claims( ct_payload_auth.2.to_string(), token_secret.to_string() );
         Self{
@@ -101,6 +102,7 @@ impl Request{
             content_type: ct_payload_auth.0.to_string(),
             authorization: ct_payload_auth.2.to_string(),
             auth_claim: claims,
+            is_shutdown: b_shut,
             api_needs_auth: Authentication::UNKNOWN,
             token_secret: token_secret.to_string(),
             ip_address: s_ip_addr_client.to_string(),

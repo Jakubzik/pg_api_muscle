@@ -160,6 +160,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>>{
     }
 
     let conf_arc = Arc::new(get_conf( &args[1] ));
+    let mut stop_me = false;
 
     // -------------------------------------------------------
     // Set up socket
@@ -217,9 +218,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>>{
         let api_val = Arc::clone( &api_val_rc );
         let pool = pool.clone();
         let mut api = API::new( &conf.token_name, &conf.pg_setvar_prefix ); 
+        if stop_me {panic!("Stopp");}
 
         // Deal with the connection
         tokio::spawn(async move {
+            if stop_me{ panic!("I am stopped!");}
             // Accept the TLS connection.
             let mut tls_stream = match tls_acceptor.accept(socket).await{
                 Ok( stream ) => stream,
@@ -278,7 +281,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>>{
                 .await
                 .expect("failed to write data to socket");
             // tls_stream.flush() ... ?
+            if (api.request).is_shutdown{ stop_me=true;panic!("Shutdown requested");}
         });
+//        if stop_me==true{ break; };
+        info!("{}", stop_me);
     }
 }
 ///
