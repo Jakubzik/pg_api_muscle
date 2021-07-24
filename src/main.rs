@@ -33,6 +33,7 @@ pub enum RequestMethod{
     DELETE,
     POSTasGET,
     SHUTDOWN,
+    RELOAD,
     UNKNOWN
 }
 
@@ -195,6 +196,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>>{
     // input from the socket
     let read_timeout = Duration::from_millis( conf_arc.server_read_timeout_ms );
     let chunksize = conf_arc.server_read_chunksize;
+//    let api_val_rc = Arc::new( read_api(&conf_arc.api_conf));
     let api_val_rc = Arc::new( read_api(&conf_arc.api_conf));
 
     loop {
@@ -279,7 +281,14 @@ async fn main() -> Result<(), Box<dyn std::error::Error>>{
             // channels or tokio::signal technology, i.e. more complex
             if (api.request).is_shutdown{ 
                 info!("Shutting down on request.");
-                std::process::exit(0);
+                exit(0);
+            }
+
+            if (api.request).is_reload_config{ 
+                info!("Reloading configuration on request.");
+                // @todo: needs to actually relaod config
+//                api_val_rc = Arc::new( read_api(&conf.api_conf));
+//                exit(0);
             }
         });
     }

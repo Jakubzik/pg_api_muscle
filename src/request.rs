@@ -20,7 +20,8 @@ pub struct Request {
     pub method: RequestMethod,
     pub method_reroute: RequestMethod,  // Do I need this? @TODO ... For POST to SQL procedures that need GET syntax from the response
     pub ip_address: String,
-    pub is_shutdown: bool,
+    pub is_shutdown: bool, // Request to shutdown the service
+    pub is_reload_config: bool, // Request to reload configuration without shutting down
     payload: Value
 }
 
@@ -88,6 +89,7 @@ impl Request{
         let ct_payload_auth: (&str, &str, &str) = Request::get_content_payload_auth( &s_req );
 
         let b_shut = Request::get_method( &s_first_line ) == RequestMethod::SHUTDOWN && s_ip_addr_client.eq("127.0.0.1");
+        let b_reload = Request::get_method( &s_first_line ) == RequestMethod::RELOAD && s_ip_addr_client.eq("127.0.0.1");
         
         let claims = Request::get_auth_claims( ct_payload_auth.2.to_string(), token_secret.to_string() );
         Self{
@@ -103,6 +105,7 @@ impl Request{
             authorization: ct_payload_auth.2.to_string(),
             auth_claim: claims,
             is_shutdown: b_shut,
+            is_reload_config: b_reload,
             api_needs_auth: Authentication::UNKNOWN,
             token_secret: token_secret.to_string(),
             ip_address: s_ip_addr_client.to_string(),
@@ -193,6 +196,7 @@ impl Request{
         let s = s_line.split("/").collect::<Vec<&str>>()[0];
 
         if s_line.to_lowercase().starts_with("delete /pg_api_muscle:knockout") { return RequestMethod::SHUTDOWN }
+        if s_line.to_lowercase().starts_with("delete /pg_api_muscle:reload") { return RequestMethod::RELOAD }
 
         match &s.to_lowercase().trim()[..]{
             "get" => RequestMethod::GET,
