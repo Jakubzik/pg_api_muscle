@@ -87,7 +87,7 @@ impl Request{
         let url_plus_par: (&str, &str) = Request::get_url_plus_parms( &s_uri );
         let ct_payload_auth: (&str, &str, &str) = Request::get_content_payload_auth( &s_req );
 
-        let b_shut = Request::get_method( &s_first_line ) == RequestMethod::SHUTDOWN;
+        let b_shut = Request::get_method( &s_first_line ) == RequestMethod::SHUTDOWN && s_ip_addr_client.eq("127.0.0.1");
         
         let claims = Request::get_auth_claims( ct_payload_auth.2.to_string(), token_secret.to_string() );
         Self{

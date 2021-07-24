@@ -1,13 +1,4 @@
-use std::{
-    fmt::{self, Formatter, Display},
-    sync::Arc,
-    path::Path,
-    io::BufReader,
-    env,
-    fs::File,
-    error::Error,
-    io::prelude::*
-};
+use std::{env, error::Error, fmt::{self, Formatter, Display}, fs::File, io::BufReader, io::prelude::*, path::Path, process::exit, sync::Arc};
 // use std::convert::TryInto;
 use tini::Ini;
 use native_tls::Identity;
@@ -160,7 +151,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>>{
     }
 
     let conf_arc = Arc::new(get_conf( &args[1] ));
-    let mut stop_me = false;
 
     // -------------------------------------------------------
     // Set up socket
@@ -207,23 +197,26 @@ async fn main() -> Result<(), Box<dyn std::error::Error>>{
     let chunksize = conf_arc.server_read_chunksize;
     let api_val_rc = Arc::new( read_api(&conf_arc.api_conf));
 
-    // Random Change for git
     loop {
         // Asynchronously wait for an inbound socket.
         let (socket, remote_addr) = tcp.accept().await?;
         let tls_acceptor = tls_acceptor.clone();
         info!("Accepting connection from {}", remote_addr);
 
+        // Need the ip address for loggin and to make sure
+        // that shutdown requests are only executed if they
+        // come from 127.0.0.1.
+        let client_ip = remote_addr.ip().to_string();
+
         // Clone things for the spawned thread:
         let conf = Arc::clone( &conf_arc );
         let api_val = Arc::clone( &api_val_rc );
         let pool = pool.clone();
         let mut api = API::new( &conf.token_name, &conf.pg_setvar_prefix ); 
-        if stop_me {panic!("Stopp");}
 
         // Deal with the connection
         tokio::spawn(async move {
-            if stop_me{ panic!("I am stopped!");}
+//            if stop_me{ panic!("I am stopped!");}
             // Accept the TLS connection.
             let mut tls_stream = match tls_acceptor.accept(socket).await{
                 Ok( stream ) => stream,
@@ -271,7 +264,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>>{
                 return;
             }
             
-            let mut response = handle_connection(s_request, &pool, &mut api, &api_val, &conf.token_secret).await;
+            let mut response = handle_connection(client_ip, s_request, &pool, &mut api, &api_val, &conf.token_secret).await;
             let r1 = response.0; 
             let tt = &mut r1.into_bytes();
             &tt.push(b'\n'); // extra line-break is important before binary input.
@@ -281,11 +274,14 @@ async fn main() -> Result<(), Box<dyn std::error::Error>>{
                 .write_all( &tt )
                 .await
                 .expect("failed to write data to socket");
-            // tls_stream.flush() ... ?
-            if (api.request).is_shutdown{ stop_me=true;panic!("Shutdown requested");}
+
+            // @todo: A graceful shutdown would be nicer, but seems connected with 
+            // channels or tokio::signal technology, i.e. more complex
+            if (api.request).is_shutdown{ 
+                info!("Shutting down on request.");
+                std::process::exit(0);
+            }
         });
-//        if stop_me==true{ break; };
-        info!("{}", stop_me);
     }
 }
 ///
@@ -294,10 +290,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>>{
 /// rejects the request if it does not conform to the API,
 /// or gets a response from tokio_postgrest as the API specifies.
 ///
-async fn handle_connection(s_req: String, cl: &Pool, mut api_shj: &mut API, api: &Value, token_secret: &String) -> (String, Vec<u8>){
-    //  @TODO: get ip address
-    let s_ip_addr_client = "127.0.0.1";
-    let request = &mut Request::new( &s_req, &s_ip_addr_client, &token_secret );
+async fn handle_connection(s_client_ip: String, s_req: String, cl: &Pool, mut api_shj: &mut API, api: &Value, token_secret: &String) -> (String, Vec<u8>){
+    let request = &mut Request::new( &s_req, &s_client_ip, &token_secret );
     api_shj.set_request( &request, api );
 
     Response::new( &mut api_shj, cl, api ).await.get_response()
