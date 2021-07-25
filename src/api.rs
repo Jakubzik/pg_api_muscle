@@ -229,6 +229,12 @@ impl API{
                 //],
         }
 
+        // @shj 2021-7-25: does this route exist?
+        // [Newly needs checking since we're allowing empty parameter lists.]
+        if api[ API::API_PATHS ]
+            [ &self.request.url ]
+            [ Request::get_method_as_str(self.request.method) ].is_null() {return "No route for this request.".to_string();}
+
         // Check params by calling the .get_checked_* methods,
         // hand back problem report
         match self.request.method{
@@ -460,6 +466,7 @@ impl API{
     ///
     /// panics if api no valid JSON.
     /// @TODO method too long.
+    /// @TODO IMPORTANT: disambiguate if there IS NO ROUTE from if IT HAS NO PARAMETERS.
     fn get_parameters_from_api( &mut self, json_route: &Value, param_type: u8 ) -> Option<Vec<APIParam>> {
 
         let s_method = Request::get_method_as_str( self.request.method );
