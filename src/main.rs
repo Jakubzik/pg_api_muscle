@@ -212,13 +212,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>>{
 
         // Clone things for the spawned thread:
         let conf = Arc::clone( &conf_arc );
-        let api_val = Arc::clone( &api_val_rc );
+        let mut api_val = Arc::clone( &api_val_rc );
         let pool = pool.clone();
         let mut api = API::new( &conf.token_name, &conf.pg_setvar_prefix ); 
 
         // Deal with the connection
         tokio::spawn(async move {
-//            if stop_me{ panic!("I am stopped!");}
             // Accept the TLS connection.
             let mut tls_stream = match tls_acceptor.accept(socket).await{
                 Ok( stream ) => stream,
@@ -267,6 +266,15 @@ async fn main() -> Result<(), Box<dyn std::error::Error>>{
             }
             
             let mut response = handle_connection(client_ip, s_request, &pool, &mut api, &api_val, &conf.token_secret).await;
+
+            if (api.request).is_reload_config{ 
+                info!("Reloading configuration on request.");
+                let args: Vec<String> = env::args().collect();
+                let conf_arc_1 = Arc::new(get_conf( &args[1] ));
+                api_val = Arc::clone( &Arc::new( read_api(&conf_arc_1.api_conf)) );
+                info!("{:?}", api_val);
+            }
+
             let r1 = response.0; 
             let tt = &mut r1.into_bytes();
             &tt.push(b'\n'); // extra line-break is important before binary input.
@@ -284,15 +292,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>>{
                 exit(0);
             }
 
-            if (api.request).is_reload_config{ 
-                info!("Reloading configuration on request.");
-                // @todo: needs to actually relaod config
-//                api_val_rc = Arc::new( read_api(&conf.api_conf));
-//                exit(0);
-            }
         });
     }
 }
+
 ///
 /// Parses the incoming request, 
 /// compares its validity against the API,

@@ -90,6 +90,7 @@ impl Request{
 
         let b_shut = Request::get_method( &s_first_line ) == RequestMethod::SHUTDOWN && s_ip_addr_client.eq("127.0.0.1");
         let b_reload = Request::get_method( &s_first_line ) == RequestMethod::RELOAD && s_ip_addr_client.eq("127.0.0.1");
+        info!("Reload request? {}", b_reload);
         
         let claims = Request::get_auth_claims( ct_payload_auth.2.to_string(), token_secret.to_string() );
         Self{
@@ -295,6 +296,8 @@ impl Request{
             RequestMethod::POSTasGET => "post->get",
             RequestMethod::PATCH => "patch",
             RequestMethod::DELETE => "delete",
+            RequestMethod::SHUTDOWN => "shutdown",
+            RequestMethod::RELOAD => "reload",
             _ => "unknown"
         }
     }

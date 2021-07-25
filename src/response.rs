@@ -193,7 +193,6 @@ impl Response{
             if page == msg_not_found.as_bytes().to_vec() { 
                 ( Response::HTTP_404.to_string(), msg_not_found.as_bytes().to_vec() )
             }else{
-//                std::fs::write( "/home/heiko/digthis.png", &page);  // Das funktioniert: page ist also ok!
                 ( Response::HTTP_200.to_string(), page )
             }
         }else{
