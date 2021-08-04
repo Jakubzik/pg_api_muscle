@@ -8,8 +8,7 @@ use crate::CheckedParam;
 use tokio_postgres::{Client};
 use tokio_postgres::types::ToSql;
 use log::{error, info};
-//#[json]
-use serde_json::Value;
+
 
 const EMPTY_RESULT: &str = "{}"; // empty string is no JSON
 
@@ -38,7 +37,7 @@ const EMPTY_RESULT: &str = "{}"; // empty string is no JSON
 /// insert, can limit rows, which is 
 /// currently under construction, though
 ///
-pub async fn get_db_response( pool: &Pool, api: &mut API, routes_json: &Value ) -> Result<String, String>{
+pub async fn get_db_response( pool: &Pool, api: &mut API ) -> Result<String, String>{
    let method = api.request.method;         
 //   let b_needs_auth = api.request.api_needs_auth == Request::API_NEEDS_AUTH_CONFIRMED; // JWT Token needed?
    let b_needs_auth = api.request.api_needs_auth == Authentication::NEEDED; // JWT Token needed?
@@ -65,29 +64,29 @@ pub async fn get_db_response( pool: &Pool, api: &mut API, routes_json: &Value ) 
        // ---------------------------------------- 
        // GET
        RequestMethod::GET => {
-           let s_sql = get_db_get_sql( api, routes_json );
-           query_db( &mut client, b_needs_auth, &api.get_checked_query_param_vals(routes_json), &s_sql, method).await
+           let s_sql = get_db_get_sql( api );
+           query_db( &mut client, b_needs_auth, &api.get_checked_query_param_vals(), &s_sql, method).await
        },
 
        // ---------------------------------------- 
        // DELETE
        RequestMethod::DELETE => {
-           let s_sql = get_db_delete_sql( api, routes_json );
-           query_db( &mut client, b_needs_auth, &api.get_checked_query_param_vals(routes_json), &s_sql, method).await
+           let s_sql = get_db_delete_sql( api );
+           query_db( &mut client, b_needs_auth, &api.get_checked_query_param_vals(), &s_sql, method).await
        },
 
        // ---------------------------------------- 
        // POST
        RequestMethod::POST => {
-           let s_sql = get_db_post_sql( api, routes_json );
-           query_db( &mut client, b_needs_auth, &api.get_checked_post_param_vals(routes_json), &s_sql, method).await
+           let s_sql = get_db_post_sql( api );
+           query_db( &mut client, b_needs_auth, &api.get_checked_post_param_vals(), &s_sql, method).await
       },
 
       // ---------------------------------------- 
       // PATCH
        RequestMethod::PATCH => {
-           let s_sql = get_db_patch_sql( api, routes_json );
-           query_db( &mut client, b_needs_auth, &api.get_checked_combined_param_vals(routes_json), &s_sql, method).await
+           let s_sql = get_db_patch_sql( api );
+           query_db( &mut client, b_needs_auth, &api.get_checked_combined_param_vals(), &s_sql, method).await
        },
        _ => Err( "Methode nicht implementiert".to_string() )
    }
@@ -135,15 +134,15 @@ async fn query_db(
 
 // Build SQL String for a patch request -> update ...
 //fn get_db_patch_sql( api: &mut API ) -> String{
-fn get_db_patch_sql( api: &mut API, routes_json: &Value ) -> String{
-       let query = &api.get_operations_id(routes_json);    // The query
-        match api.get_checked_query_params(routes_json).len(){
+fn get_db_patch_sql( api: &mut API ) -> String{
+       let query = &api.get_operations_id();    // The query
+        match api.get_checked_query_params().len(){
             0 => format!("update {} set {} returning row_to_json({}.*)::text;", query, 
-                    get_parameter_assignment_csv( &api.get_checked_post_params( routes_json ) ), query),
+                    get_parameter_assignment_csv( &api.get_checked_post_params( ) ), query),
             _ => format!("update {} set {} where ({}) returning row_to_json({}.*)::text;", 
                     query, 
-                    get_parameter_assignment_csv( &api.get_checked_post_params( routes_json ) ), 
-                    get_parameter_where_criteria( api, routes_json  ), 
+                    get_parameter_assignment_csv( &api.get_checked_post_params( ) ), 
+                    get_parameter_where_criteria( api ), 
                     query)
         }
 }
@@ -153,9 +152,9 @@ fn get_db_patch_sql( api: &mut API, routes_json: &Value ) -> String{
 // (2) select X from a stored proc. 
 // The indicator for (2) is: "x-query-syntax-of-method":"GET"
 // fn get_db_post_sql( api: &mut API ) -> String{
-fn get_db_post_sql( api: &mut API, routes_json: &Value ) -> String{
+fn get_db_post_sql( api: &mut API ) -> String{
 
-       let query = &api.get_operations_id( routes_json );    // The query
+       let query = &api.get_operations_id(  );    // The query
 
        // "Reroute" is a special functionality for POST 
        // requests that need GET-treatment:
@@ -166,40 +165,40 @@ fn get_db_post_sql( api: &mut API, routes_json: &Value ) -> String{
            RequestMethod::POSTasGET => {
                format!("select json_agg(t)::text from (select * from {} ({})) t;", 
                    query, 
-                   get_sql_named_notation_from_params( &api.get_checked_post_params( routes_json ) ))
+                   get_sql_named_notation_from_params( &api.get_checked_post_params( ) ))
            },
 
            // Default for POST is 'insert into,' though.
            _ =>{ format!("insert into {} ({}) values ({}) returning row_to_json({}.*)::text;", 
                query, 
-               get_parameter_names_csv( &api.get_checked_post_params(routes_json) ), 
-               get_parameter_placeholder_csv( &api.get_checked_post_params(routes_json), None ), 
+               get_parameter_names_csv( &api.get_checked_post_params() ), 
+               get_parameter_placeholder_csv( &api.get_checked_post_params(), None ), 
                query)
            }
        }
 }
 
 /// Build SQL String for a get request -> select * from
-fn get_db_get_sql( api: &mut API, routes_json: &Value ) -> String{
+fn get_db_get_sql( api: &mut API ) -> String{
 
-    let query = &api.get_operations_id( routes_json );    // The query
+    let query = &api.get_operations_id( );    // The query
 
     // Case 0 means: there are no parameters.
-    match api.get_checked_query_params(routes_json).len(){
+    match api.get_checked_query_params().len(){
         0 => format!("select json_agg(t)::text from (select * from {}) t;", query),
         _ => format!("select json_agg(t)::text from (select * from {} where {}) t;", 
-            query, get_parameter_where_criteria( api, routes_json ))
+            query, get_parameter_where_criteria( api ))
     }
 }
 
 // Build SQL String for a delete request -> delete * from
-fn get_db_delete_sql( api: &mut API, routes_json: &Value ) -> String{
+fn get_db_delete_sql( api: &mut API ) -> String{
 
-       let query = &api.get_operations_id( routes_json );    // The query
+       let query = &api.get_operations_id( );    // The query
 
-        match api.get_checked_query_params(routes_json).len(){
+        match api.get_checked_query_params().len(){
             0 => format!("delete from {};", query),
-            _ => format!("delete from {} where {};", query, get_parameter_where_criteria( api, routes_json ))
+            _ => format!("delete from {} where {};", query, get_parameter_where_criteria( api ))
         }
 }
 
@@ -262,19 +261,19 @@ fn get_parameter_assignment_csv( request: &Vec<CheckedParam>  ) -> String{
 /// If the parameters are {"name": "id", value: 1}, {"name": "salary", value: 2000 } in a PATCH
 /// that has a payload of {"company":200, "year":2021}, the it will return
 /// id=$3 and salary=$4 (as in: update X set company=$1 and year=$2 where id=$3 and "salary"=$4.
-fn get_parameter_where_criteria( api: &mut API, routes_json: &Value ) -> String{
+fn get_parameter_where_criteria( api: &mut API ) -> String{
 
     let mut ii = match api.request.method{
-        RequestMethod::PATCH => api.get_checked_post_params(routes_json).len(),
+        RequestMethod::PATCH => api.get_checked_post_params().len(),
         _ => {
-            if api.get_checked_post_params(routes_json).len() > 0{
-                error!("Strange: getting post params {:?}", api.get_checked_post_params(routes_json));
+            if api.get_checked_post_params().len() > 0{
+                error!("Strange: getting post params {:?}", api.get_checked_post_params());
             }
             0
         }
     }; 
 
-    api.get_checked_query_params(routes_json).into_iter().map( |y| { 
+    api.get_checked_query_params().into_iter().map( |y| { 
         ii+=1;
         format!("and \"{}\"=${} ", &y.name, ii)}  ).collect::<String>().chars().skip(4).collect()
 }

@@ -9,6 +9,7 @@ use crate::ParamVal;
 use crate::APIParam;
 use crate::Schema;
 
+use std::{fs::File, io::BufReader};
 use std::{
     convert::TryInto
 };
@@ -29,7 +30,10 @@ pub struct API {
     token_name: String,
     pg_setvar_prefix: String,
     pub pg_set: String,
-    request_set: bool
+    request_set: bool,
+    routing_json: Value,
+    routing_file_path: String,
+    routing_file_read: bool
 }
 
 #[derive(Serialize, Deserialize, Debug)]
@@ -57,12 +61,12 @@ impl API{
     const PARAM_TYPE_QUERY:u8 = 1;
 
     /// API provides functions to check the request
-    /// for conformance to the JSON route (defined 
+    /// against the JSON route (defined 
     /// through OpenAPI)
     ///
     /// The API struct remains initialized with the API. In order to check 
     /// a new request, call .set_request.
-    pub fn new( pg_token_name: &str, pg_setvar_prefix: &str ) -> Self{
+    pub fn new( pg_token_name: &str, pg_setvar_prefix: &str, s_routing_file: &str ) -> Self{
         API{
             checked_query_parameters: vec![],
             problems_query_parameters: S_EMPTY,
@@ -73,21 +77,49 @@ impl API{
             token_name: pg_token_name.to_string(),
             pg_setvar_prefix: pg_setvar_prefix.to_string(),
             pg_set: "".to_string(),
+            routing_file_path: s_routing_file.to_string(),
+            routing_file_read: false,
+            routing_json: serde_json::from_str("{}").unwrap(),
             request: Request::default(),
             request_set: false
         }
     }
 
-    /// If POST is used but SELECT syntax needed in the db
+    /// Read the OpenAPI file containing this server's endpoints
+    /// (Set self.routing_file_read = false for a re-read)
+    fn read_api(&mut self){
+
+        // only read it it is not already read
+        if !self.routing_file_read {
+
+            // Open the file in read-only mode 
+            let open_api_file = match File::open(&self.routing_file_path){
+                // @todo: consider process.exit(0)
+                Err( _e ) => panic!("Cannot find file with API configuration"),
+                Ok ( f ) => f
+            };
+
+            info!("Reading routing table (again?) ...");
+            self.routing_json = match serde_json::from_reader( BufReader::new( open_api_file )){
+                // @todo: consider process.exit(0)
+                Err( _ ) => panic!("Cannot parse file with API configuration"),
+                Ok( api ) => api
+            };
+
+            self.routing_file_read = true;
+        }
+    }
+
+    /// If POST is used but SELECT syntax needed for db query
     /// (e.g. in login, where the credentials are sent 
     /// through payload in a post request, but a 
     /// stored prodecure called using `SELECT`),
-    /// the API.json must set
-    /// x-query-syntax-of-method: "GET".
-    /// This is stored in API.request.method_reroute.
-    fn check_rerouting( &mut self, api: &Value ){
+    /// the API.json has `x-query-syntax-of-method: "GET"`.
+    ///
+    /// accessible through API.request.method_reroute.
+    fn check_rerouting( &mut self ){
         if self.request.method == RequestMethod::POST {
-            if api[ API::API_PATHS ]
+            if self.routing_json[ API::API_PATHS ]
                 [ &self.request.url ]
                 [ Request::get_method_as_str(self.request.method) ]
                 [ "x-query-syntax-of-method" ].as_str().unwrap_or("") == "GET" {
@@ -100,23 +132,26 @@ impl API{
     // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
     // Important public methods
     ///
-    /// Re-use the API 
-    /// for different requests
-    ///
-    pub fn set_request( &mut self, request: &Request, api: &Value ){
+    /// Initialise a request for this API
+    pub fn set_request( &mut self, request: &Request ){
         self.reset_request();
         self.request = request.clone();
-        self.check_rerouting( api );
-        self.check_auth_need( api );
+        if request.is_reload_config{
+            info!("Request to reload the openAPI endpoint configuration.");
+            self.routing_file_read = false;
+        }
+        self.read_api(); // usually does nothing
+        self.check_rerouting( );
+        self.check_auth_need( );
         self.request_set = true;
     }
 
-    /// Checks request parameters against the API and returns
+    /// Check request parameters against API and return
     /// a collection of CheckedParameters
     ///
     /// Checking means:
     ///
-    /// (1) It is made sure that all required parameters are present
+    /// (1) all required parameters are present
     ///     and of the expected type;
     ///
     /// (2) Parameters that are *not* required are checked for the  
@@ -124,36 +159,38 @@ impl API{
     ///
     /// (3) Unexpected parameters are ignored.
     ///
-    pub fn get_checked_query_params( &mut self, api: &Value ) -> &Vec<CheckedParam>{
+    pub fn get_checked_query_params( &mut self ) -> &Vec<CheckedParam>{
 
         // ----------------------------------------------------------------------
         // Interface: Make sure a request is present 
         if !self.request_set { 
             error!("There is no request set to check against this API"); 
             self.checked_query_parameters = vec![];
+            // @TODO: consider panic? process.exit(1)?
             return &self.checked_query_parameters;
         };
 
         // Read query params if they aren't read yet
-        if !self.checked_query_params_read { self.check_query_parameters( api ); }
+        if !self.checked_query_params_read { self.check_query_parameters( ); }
 
         &self.checked_query_parameters
     }
     
     /// Get a list of payload parameters in this POST or PATCH
     /// request that conform to the API.
-    pub fn get_checked_post_params( &mut self, api: &Value ) -> &Vec<CheckedParam>{
+    pub fn get_checked_post_params( &mut self ) -> &Vec<CheckedParam>{
 
         // ----------------------------------------------------------------------
         // Make sure a request is present
         if !self.request_set { 
             error!("There is no request set to check against this API"); 
             self.checked_query_parameters = vec![];
+            // @TODO: consider panic? process.exit(1)?
             return &self.checked_post_parameters;
         };
 
         if !self.checked_post_params_read {
-            self.check_post_parameters( api );
+            self.check_post_parameters( );
         }
 
         &self.checked_post_parameters
@@ -162,13 +199,14 @@ impl API{
     /// Where does the request differ from the specification of the API?
     /// Empty if the request accords to the API
     /// @TODO: needs to be stored in object var?
-    pub fn get_request_deviation( &mut self, api: &Value ) -> String{
+    pub fn get_request_deviation( &mut self ) -> String{
 
         // ----------------------------------------------------------------------
         // Interface: Make sure a request is present 
         if !self.request_set { 
             error!("There is no request set to check against this API"); 
             self.checked_query_parameters = vec![];
+            // @TODO: consider panic? process.exit(1)?
             return S_EMPTY;
         };
 
@@ -179,11 +217,9 @@ impl API{
             if !self.request.has_valid_auth() {return 
                 String::from("API requires valid authentication for this request, but none was found");}
 
-
-            info!("Checking items...");
-            let ci = self.get_auth_claim_items_from_api( &api );
+            let auth_claim_items = self.get_auth_claim_items_from_api( );
             let mut pg_set = "".to_string();
-            for i in ci{
+            for i in auth_claim_items{
                 info!("Items: {:?}", i);
                 match i.checkval{
                     Some (val) => {
@@ -231,7 +267,7 @@ impl API{
 
         // @shj 2021-7-25: does this route exist?
         // [Newly needs checking since we're allowing empty parameter lists.]
-        if api[ API::API_PATHS ]
+        if self.routing_json[ API::API_PATHS ]
             [ &self.request.url ]
             [ Request::get_method_as_str(self.request.method) ].is_null() {return "No route for this request.".to_string();}
 
@@ -239,16 +275,16 @@ impl API{
         // hand back problem report
         match self.request.method{
             RequestMethod::GET => {
-                self.get_checked_query_params(api);
+                self.get_checked_query_params();
                 self.problems_query_parameters.to_owned()
             },
             RequestMethod::DELETE => {
-                self.get_checked_query_params(api);
+                self.get_checked_query_params();
                 self.problems_query_parameters.to_owned()
             },
             RequestMethod::PATCH => {
-                self.get_checked_query_params(api);
-                &self.get_checked_post_params(api);
+                self.get_checked_query_params();
+                &self.get_checked_post_params();
                 if self.problems_query_parameters == "No such route" {
                      "No such route".to_string()  // otherwise "No such route" is returned twice
                 }else{
@@ -258,7 +294,7 @@ impl API{
                 }
             },
             RequestMethod::POST => {
-                &self.get_checked_post_params(api);
+                &self.get_checked_post_params();
                 self.problems_post_parameters.to_owned()
             }
             _ => { "This request method is not implemented; please use PATCH, POST, GET, or DELETE".to_string() }
@@ -267,24 +303,24 @@ impl API{
     
     /// Get the values of all checked query parameters
     /// as a vector (e.g. for use in a stored procedure)
-    pub fn get_checked_query_param_vals( &mut self, api: &Value ) -> Vec<&ParamVal>{
-        self.check_query_parameters(api);
+    pub fn get_checked_query_param_vals( &mut self ) -> Vec<&ParamVal>{
+        self.check_query_parameters();
         API::get_param_vals( &self.checked_query_parameters )
     }
 
     /// Get the values of all checked post parameters
     /// as a vector (e.g. for use in a stored procedure)
-    pub fn get_checked_post_param_vals( &mut self, api: &Value ) -> Vec<&ParamVal>{
-        self.check_query_parameters(api);
+    pub fn get_checked_post_param_vals( &mut self ) -> Vec<&ParamVal>{
+        self.check_query_parameters();
         API::get_param_vals( &self.checked_post_parameters )
     }
 
     /// Get the values of all checked post *and* query parameters
     /// combined as a vector (e.g. for use in a stored procedure like 
     /// `update set x=y where a=b`)
-    pub fn get_checked_combined_param_vals( &mut self, json_route: &Value ) -> Vec<&ParamVal>{
-        self.check_query_parameters(json_route);
-        self.check_post_parameters(json_route);
+    pub fn get_checked_combined_param_vals( &mut self ) -> Vec<&ParamVal>{
+        self.check_query_parameters();
+        self.check_post_parameters();
         let mut c_post = API::get_param_vals( &self.checked_post_parameters );
         let mut c_query = API::get_param_vals( &self.checked_query_parameters );
         c_post.append( &mut c_query );
@@ -301,12 +337,12 @@ impl API{
 
     /// Checks if all payload parameters that the API requires for
     /// the request are present and of the expected type.
-    fn check_post_parameters( &mut self, json_route: &Value ){
+    fn check_post_parameters( &mut self ){
 
         debug!("Checking post parameters: looking for {} in {}", self.request.method, self.request.url );
 
         // Get obligatory parameters for this route. If we find some, ...
-        let tmp: Vec<UnCheckedParam> = match self.get_parameters_from_api( json_route, API::PARAM_TYPE_PAYLOAD ){
+        let tmp: Vec<UnCheckedParam> = match self.get_parameters_from_api( API::PARAM_TYPE_PAYLOAD ){
         
             // ...: collect and return error 
             // messages and name/value pairs 
@@ -331,7 +367,7 @@ impl API{
 
     /// Checks if all query parameters that the API requires
     /// for the request are present and of the expected type
-    fn check_query_parameters( &mut self, json_route: &Value ){
+    fn check_query_parameters( &mut self ){
 
         if !self.checked_query_params_read {
             debug!("Looking for {} in {}", self.request.method, self.request.url );
@@ -340,7 +376,7 @@ impl API{
             // produce a vector of "UnCheckedParam" with 
             // the successfull and problematic aspects
             // of this request
-            let tmp = match self.get_parameters_from_api( json_route, API::PARAM_TYPE_QUERY ){
+            let tmp = match self.get_parameters_from_api( API::PARAM_TYPE_QUERY ){
 
                 Some( parms ) => parms.into_iter().map( 
                     |par| { API::check_parameter( &par.name, &par.required,
@@ -372,7 +408,7 @@ impl API{
     
     /// Retrieve the `operationId` (name of the view) of this
     /// request from API.
-    pub fn get_operations_id( &mut self, json_route: &Value ) -> String{
+    pub fn get_operations_id( &mut self ) -> String{
        
         // ----------------------------------------------------------------------
         // Interface: Make sure a request is present 
@@ -382,7 +418,7 @@ impl API{
             return S_EMPTY;
         };
 
-        match json_route[ API::API_PATHS ]
+        match self.routing_json[ API::API_PATHS ]
             [ &self.request.url ]
             [ Request::get_method_as_str(self.request.method) ]
             [ API::API_QUERY ].as_str() {
@@ -443,10 +479,10 @@ impl API{
         par != API::SUPERFLUOUS_PARAMETER
     }
 
-    fn get_auth_claim_items_from_api( &mut self, json_route: &Value ) -> Vec<ClaimItem>{
+    fn get_auth_claim_items_from_api( &mut self ) -> Vec<ClaimItem>{
         let s_method = Request::get_method_as_str( self.request.method );
         let s_path = &self.request.url;
-        let result2: Vec<ClaimItem> = match serde_json::from_value( json_route[ API::API_PATHS ]
+        let result2: Vec<ClaimItem> = match serde_json::from_value( self.routing_json[ API::API_PATHS ]
             [ s_path ]
             [ s_method ]
             [ "x-claim-custom" ].clone() ){
@@ -467,7 +503,7 @@ impl API{
     /// panics if api no valid JSON.
     /// @TODO method too long.
     /// @TODO IMPORTANT: disambiguate if there IS NO ROUTE from if IT HAS NO PARAMETERS.
-    fn get_parameters_from_api( &mut self, json_route: &Value, param_type: u8 ) -> Option<Vec<APIParam>> {
+    fn get_parameters_from_api( &mut self, param_type: u8 ) -> Option<Vec<APIParam>> {
 
         let s_method = Request::get_method_as_str( self.request.method );
         let s_path = &self.request.url;
@@ -479,7 +515,7 @@ impl API{
             // $ref liefert als Wert einen pointer wie #/components/schemas/student_bemerkung, 
             // von dem wir das einleitende "#" auslassen müssen:
 //            let s_pointer = match &self.api[ API::API_PATHS ]
-            let s_pointer = match json_route[ API::API_PATHS ]
+            let s_pointer = match self.routing_json[ API::API_PATHS ]
                 [ s_path ]
                 [ s_method ]
                 [ "requestBody" ]
@@ -495,7 +531,7 @@ impl API{
 
             // The properties of this object. I guess because 
             // of the iteration below, they must be flat.
-            let s_props = json_route.pointer( &(s_pointer.to_owned() + 
+            let s_props = self.routing_json.pointer( &(s_pointer.to_owned() + 
                     &"/properties".to_owned()) ).unwrap_or(&Value::Null);
 
             // Wenn der Pointer keine Ergebnisse liefert, gilt die API als nicht fertig
@@ -508,7 +544,7 @@ impl API{
             
             // The properties that are *required* are listed in an extra 
             // array (openAPI spec https://swagger.io/docs/specification/describing-request-body/)
-            let s_required_sub: &Value = json_route.pointer( &(s_pointer.to_owned() + 
+            let s_required_sub: &Value = self.routing_json.pointer( &(s_pointer.to_owned() + 
                     &"/required".to_owned()) ).unwrap_or( &Value::Null );
 
             // If no parameters of the object are marked as required,
@@ -545,7 +581,7 @@ impl API{
                 _ => "patch"
             };
 
-            let result2: Vec<APIParam> = match serde_json::from_value( json_route[ API::API_PATHS ]
+            let result2: Vec<APIParam> = match serde_json::from_value( self.routing_json[ API::API_PATHS ]
                 [ s_path ]
                 [ s_method_path ]
                 [ "parameters" ].clone() ){
@@ -819,8 +855,8 @@ impl API{
     /// in the request, if the api for
     /// this request contains 
     /// "x-auth-method":"forward_jwt_bearer",
-    fn check_auth_need( &mut self, api: &Value ){
-        if api[ API::API_PATHS ]
+    fn check_auth_need( &mut self ){
+        if self.routing_json[ API::API_PATHS ]
             [ &self.request.url ]
             [ Request::get_method_as_str(self.request.method) ]
             [ "x-auth-method" ] == "forward_jwt_bearer" {

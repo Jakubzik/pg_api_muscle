@@ -1,5 +1,5 @@
-use std::{env, error::Error, fmt::{self, Formatter, Display}, fs::File, io::BufReader, io::prelude::*, path::Path, process::exit, sync::Arc};
-// use std::convert::TryInto;
+use std::{borrow::BorrowMut, env, error::Error, fmt::{self, Formatter, Display}, fs::File,io::prelude::*, process::exit, sync::Arc};
+use futures::lock::Mutex;
 use tini::Ini;
 use native_tls::Identity;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
@@ -13,8 +13,6 @@ use std::time::Duration;
 use deadpool_postgres::{Config, ManagerConfig, Pool, RecyclingMethod };
 use tokio_postgres::NoTls;
 
-//#[json]
-use serde_json::Value;
 mod db;
 mod request;
 mod response;
@@ -125,20 +123,20 @@ pub struct CheckedParam{
 // MuscleConfiguration parameters
 #[derive (Debug)]
 pub struct MuscleConfig{
-    port: usize,
-    addr: String,
-    db: String,
-    db_user: String,
-    db_pass: String,
-    cert_pass: String,
-    cert_file: String,
-    api_conf: String,
-    token_name: String,
-    token_secret: String,
-    pg_setvar_prefix: String,
-    timezone: String,
-    server_read_timeout_ms: u64,
-    server_read_chunksize: usize
+    port: usize,                     // Server port
+    addr: String,                    // Server address
+    db: String,                      // Name of Postgres (Pg) db
+    db_user: String,                 // Name of Pg user
+    db_pass: String,                 // Password of Pg user
+    cert_pass: String,               // Pwd for server certificate (TLS/Https)
+    cert_file: String,               // Certificate file (TLS/Https)
+    api_conf: String,                // OpenAPI config file containing endpoints
+    token_name: String,              // Pg token name: @TODO
+    token_secret: String,            // Pg shared token secret: @TODO
+    pg_setvar_prefix: String,        // Pg prefix for variables that are set in postgres through the token: @TODO
+    timezone: String,                // Timezone to set Pg to
+    server_read_timeout_ms: u64,     // Tweak @TODO
+    server_read_chunksize: usize     // Tweak @TODO
 }
 
 #[tokio::main]
@@ -151,34 +149,34 @@ async fn main() -> Result<(), Box<dyn std::error::Error>>{
         panic!("Missing command line argument pointing to .ini file");
     }
 
-    let conf_arc = Arc::new(get_conf( &args[1] ));
+    let pg_api_muscle_config = Arc::new(get_conf( &args[1] ));
 
     // -------------------------------------------------------
     // Set up socket
-    let addr = format!("{}:{}", conf_arc.addr, conf_arc.port);
-    let tcp: TcpListener = TcpListener::bind(&addr).await?;
+    let server_base_url = format!("{}:{}", pg_api_muscle_config.addr, pg_api_muscle_config.port);
+    let tcp_listener: TcpListener = TcpListener::bind(&server_base_url).await?;
 
     // Create the TLS acceptor.
-    let mut file = match File::open( &*conf_arc.cert_file ){
+    let mut certificat_file = match File::open( &*pg_api_muscle_config.cert_file ){
         Ok ( f ) => f,
-        Err ( e ) => panic!("Certificate `{}` not found: {:?}", &*conf_arc.cert_file, e)
+        Err ( e ) => panic!("Certificate `{}` not found: {:?}", &*pg_api_muscle_config.cert_file, e)
     };
 
     let mut identity = vec![];
-    file.read_to_end( &mut identity ).expect(&*format!("Reading certificate file `{}`", conf_arc.cert_file));
+    certificat_file.read_to_end( &mut identity ).expect(&*format!("Reading certificate file `{}`", pg_api_muscle_config.cert_file));
 
-    let cert = Identity::from_pkcs12( &identity, &*conf_arc.cert_pass ).expect(&*format!("Constructing certificate from file `{}` using password `{}`", conf_arc.cert_file, conf_arc.cert_pass)); 
-
-    let tls_acceptor = tokio_native_tls::TlsAcceptor::from(native_tls::TlsAcceptor::builder(cert).build()?);
+    let certificate = Identity::from_pkcs12( &identity, &*pg_api_muscle_config.cert_pass ).expect(&*format!("Constructing certificate from file `{}` using password `{}`", pg_api_muscle_config.cert_file, pg_api_muscle_config.cert_pass)); 
+    let tls_acceptor = tokio_native_tls::TlsAcceptor::from(native_tls::TlsAcceptor::builder(certificate).build()?);
 
     // -------------------------------------------------------
     // Set up DEADPOOL
     // See <https://docs.rs/deadpool-postgres/0.7.0/deadpool_postgres/config/struct.Config.html>
-    let mut cfg = Config::new();
-    cfg.dbname = Some(conf_arc.db.to_string());
-    cfg.user = Some(conf_arc.db_user.to_string());
-    cfg.password = Some(conf_arc.db_pass.to_string());
-    cfg.manager = Some(ManagerConfig { recycling_method: RecyclingMethod::Fast });
+    let mut deadpool_config = Config::new();
+    deadpool_config.dbname = Some(pg_api_muscle_config.db.to_string());
+    deadpool_config.user = Some(pg_api_muscle_config.db_user.to_string());
+    deadpool_config.password = Some(pg_api_muscle_config.db_pass.to_string());
+    deadpool_config.manager = Some(ManagerConfig { recycling_method: RecyclingMethod::Fast });
+
 //    This (below) does not make sure that the timezone is set on all clients;
 //    it may set the timezone on *recycled* clients, but when a new client is
 //    initiated into the pool, GMT is set again. Waiting for a future version 
@@ -187,37 +185,44 @@ async fn main() -> Result<(), Box<dyn std::error::Error>>{
 //    cfg.manager = Some(ManagerConfig { recycling_method: RecyclingMethod::Custom(format!("set timezone='Europe/Berlin'")) });
 //    Nor does this work:
 //    cfg.options = Some(format!("-c timezone={}", conf.timezone.to_string()));
-    let pool = cfg.create_pool(NoTls).unwrap();
+    let pool = deadpool_config.create_pool(NoTls).unwrap();
 
     // adjust_timezone( &mut pool.get().await.unwrap(), "Europe/Berlin").await;
     // DEADPOOL END
 
     // time_out specifies when to stop waiting for more
     // input from the socket
-    let read_timeout = Duration::from_millis( conf_arc.server_read_timeout_ms );
-    let chunksize = conf_arc.server_read_chunksize;
-//    let api_val_rc = Arc::new( read_api(&conf_arc.api_conf));
-    let api_val_rc = Arc::new( read_api(&conf_arc.api_conf));
+    let read_timeout = Duration::from_millis( pg_api_muscle_config.server_read_timeout_ms );
+    let chunksize = pg_api_muscle_config.server_read_chunksize;
+    let muscle_config = Arc::clone( &pg_api_muscle_config );
+
+    // API contains basically the main logic, esp. also the
+    // routing table. Since the API is handed the request,
+    // it needs to be mutable. That's why it is put inside
+    // an async-aware Mutex.
+    let muscle_api = Arc::new(Mutex::new(
+        API::new( &muscle_config.token_name, &muscle_config.pg_setvar_prefix, &muscle_config.api_conf )));
 
     loop {
         // Asynchronously wait for an inbound socket.
-        let (socket, remote_addr) = tcp.accept().await?;
+        let (socket, remote_addr) = tcp_listener.accept().await?;
         let tls_acceptor = tls_acceptor.clone();
         info!("Accepting connection from {}", remote_addr);
 
-        // Need the ip address for loggin and to make sure
+        let api = Arc::clone(&muscle_api);
+
+        // Need the ip address for logging and to make sure
         // that shutdown requests are only executed if they
-        // come from 127.0.0.1.
+        // come from 127.0.0.1. <- @HACK: server.addr
         let client_ip = remote_addr.ip().to_string();
 
         // Clone things for the spawned thread:
-        let conf = Arc::clone( &conf_arc );
-        let mut api_val = Arc::clone( &api_val_rc );
-        let pool = pool.clone();
-        let mut api = API::new( &conf.token_name, &conf.pg_setvar_prefix ); 
+        let cloned_conf = Arc::clone( &pg_api_muscle_config );
+        let cloned_pool = pool.clone();
 
         // Deal with the connection
         tokio::spawn(async move {
+
             // Accept the TLS connection.
             let mut tls_stream = match tls_acceptor.accept(socket).await{
                 Ok( stream ) => stream,
@@ -265,33 +270,40 @@ async fn main() -> Result<(), Box<dyn std::error::Error>>{
                 return;
             }
             
-            let mut response = handle_connection(client_ip, s_request, &pool, &mut api, &api_val, &conf.token_secret).await;
+            // response is 
+            //   .0: status + header,
+            //   .1: content,
+            //   .2: flag for request for static content,
+            let mut response = handle_connection(client_ip, 
+                s_request, &cloned_pool, 
+                &mut api.lock().await.borrow_mut(), &cloned_conf.token_secret).await;
 
-            if (api.request).is_reload_config{ 
-                info!("Reloading configuration on request.");
-                let args: Vec<String> = env::args().collect();
-                let conf_arc_1 = Arc::new(get_conf( &args[1] ));
-                api_val = Arc::clone( &Arc::new( read_api(&conf_arc_1.api_conf)) );
-                info!("{:?}", api_val);
-            }
+            let s_status_and_header = response.0; 
+            let v_response = &mut s_status_and_header.into_bytes();
 
-            let r1 = response.0; 
-            let tt = &mut r1.into_bytes();
-            &tt.push(b'\n'); // extra line-break is important before binary input.
-            &tt.append( &mut response.1 );
+            // static responses get an extra linebreak between headers
+            // and the content. Esp. binary format -- .pngs, for example --
+            // cause weird browser problems otherwise: Firefox displays the 
+            // png but fails on download; chrome does not display.
+            // Even with the linebreak, wget is unhappy and complains about
+            // a reading error (Lesefehler)
+            // anyway -- here it goes. response.2 is boolean for a request to 
+            // a static resource
+            if response.2 {&v_response.push(b'\n');}
+
+            &v_response.append( &mut response.1 );
 
             tls_stream
-                .write_all( &tt )
+                .write_all( &v_response )
                 .await
                 .expect("failed to write data to socket");
 
             // @todo: A graceful shutdown would be nicer, but seems connected with 
             // channels or tokio::signal technology, i.e. more complex
-            if (api.request).is_shutdown{ 
+            if (api.lock().await.request).is_shutdown{ 
                 info!("Shutting down on request.");
                 exit(0);
             }
-
         });
     }
 }
@@ -302,25 +314,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>>{
 /// rejects the request if it does not conform to the API,
 /// or gets a response from tokio_postgrest as the API specifies.
 ///
-async fn handle_connection(s_client_ip: String, s_req: String, cl: &Pool, mut api_shj: &mut API, api: &Value, token_secret: &String) -> (String, Vec<u8>){
-    let request = &mut Request::new( &s_req, &s_client_ip, &token_secret );
-    api_shj.set_request( &request, api );
-
-    Response::new( &mut api_shj, cl, api ).await.get_response()
-}
-
-fn read_api<P: AsRef<Path>>(path: P) -> Value {
-
-    // Open the file in read-only mode 
-    let file = match File::open(path){
-        Err( _e ) => panic!("Cannot find file with API configuration"),
-        Ok ( f ) => f
-    };
-
-    match serde_json::from_reader( BufReader::new( file )){
-        Err( _e ) => panic!("Cannot parse file with API configuration"),
-        Ok( api ) => api
-    }
+async fn handle_connection(s_client_ip: String, s_request: String, db_client: &Pool, mut api: &mut API, token_secret: &String) -> (String, Vec<u8>, bool){
+    let request = &mut Request::new( &s_request, &s_client_ip, &token_secret );
+    api.set_request( &request );
+    Response::new( &mut api, db_client ).await.get_response()
 }
 
 // =====================================================================================
