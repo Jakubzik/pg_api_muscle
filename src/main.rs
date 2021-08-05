@@ -201,7 +201,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>>{
     // it needs to be mutable. That's why it is put inside
     // an async-aware Mutex.
     let muscle_api = Arc::new(Mutex::new(
-        API::new( &muscle_config.token_name, &muscle_config.pg_setvar_prefix, &muscle_config.api_conf )));
+        API::new( &muscle_config.addr, &muscle_config.token_name, &muscle_config.pg_setvar_prefix, &muscle_config.api_conf )));
 
     loop {
         // Asynchronously wait for an inbound socket.
@@ -315,7 +315,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>>{
 /// or gets a response from tokio_postgrest as the API specifies.
 ///
 async fn handle_connection(s_client_ip: String, s_request: String, db_client: &Pool, mut api: &mut API, token_secret: &String) -> (String, Vec<u8>, bool){
-    let request = &mut Request::new( &s_request, &s_client_ip, &token_secret );
+    let request = &mut Request::new( &s_request, &s_client_ip, &api.local_ip_address, &token_secret );
     api.set_request( &request );
     Response::new( &mut api, db_client ).await.get_response()
 }
@@ -333,7 +333,7 @@ mod test_get_query{
 
     #[test]
     fn simple() {
-        let mut r:Request = Request::new( "/path/to/this?a=1&b=ä", "::1", "" );
+        let mut r:Request = Request::new( "/path/to/this?a=1&b=ä", "::1", "127.0.0.1", "" );
         assert_eq!( r.get_query_param( "a" ),  Some("1") );
         assert_eq!( r.get_query_param( "b" ),  Some("ä") );
         assert_eq!( r.get_query_param( "c" ),  None );
@@ -342,7 +342,7 @@ mod test_get_query{
     }
     #[test]
     fn simple1() {
-        let mut r:Request = Request::new( "path/to/this", "::1", "" );
+        let mut r:Request = Request::new( "path/to/this", "::1", "127.0.0.1", "" );
         assert_eq!( r.get_query_param( "a"),  None );
         assert_eq!( r.get_query_param( "c" ),  None );
         assert_eq!( r.get_payload_param( "c" ),  None );
@@ -351,7 +351,7 @@ mod test_get_query{
 
     #[test]
     fn s_payload() {
-        let mut r:Request = Request::new( "path/to/this\n{\"this\":\"that\"}", "::1", "" );
+        let mut r:Request = Request::new( "path/to/this\n{\"this\":\"that\"}", "::1", "127.0.0.1", "" );
         assert_eq!( r.get_query_param( "a"),  None );
         assert_eq!( r.get_query_param( "c" ),  None );
         assert_eq!( r.get_payload_param( "this" ).unwrap().as_str(),  Some("that") );
@@ -361,7 +361,7 @@ mod test_get_query{
 
     #[test]
     fn get_static() {
-        let r:Request = Request::new( "/static/path/to/this\n{\"this\":\"that\"}", "::1", "" );
+        let r:Request = Request::new( "/static/path/to/this\n{\"this\":\"that\"}", "::1", "127.0.0.1", "" );
         assert_eq!( r.is_static(),  true );
     }
 
@@ -373,28 +373,28 @@ mod test_get_query{
 //    }
     #[test]
     fn get_auth() {
-        let r:Request = Request::new( "/static/path/to/this\n{\"this\":\"that\"}\nAuthorization: Bearer 1234&äß", "::1", "" );
+        let r:Request = Request::new( "/static/path/to/this\n{\"this\":\"that\"}\nAuthorization: Bearer 1234&äß", "::1", "127.0.0.1", "" );
         assert_eq!( r.get_auth(),  "1234&äß" );
 //        assert_eq!( r.has_token(),  true );
     }
 
     #[test]
     fn get_auth_problematic_short() {
-        let r:Request = Request::new( "/static/path/to/this\n{\"this\":\"that\"}\nAuthorization: Bearer", "::1", "");
+        let r:Request = Request::new( "/static/path/to/this\n{\"this\":\"that\"}\nAuthorization: Bearer", "::1", "127.0.0.1", "");
         assert_eq!( r.get_auth(),  "" );
 //        assert_eq!( r.has_token(),  false );
     }
 
     #[test]
     fn get_auth_problematic_long() {
-        let r:Request = Request::new( "/static/path/to/this\n{\"this\":\"that\"}\nAuthorization: Bearer 1234567890123456789012345678901234567890", "::1", "" );
+        let r:Request = Request::new( "/static/path/to/this\n{\"this\":\"that\"}\nAuthorization: Bearer 1234567890123456789012345678901234567890", "::1", "127.0.0.1", "" );
         assert_eq!( r.get_auth(),  "1234567890123456789012345678901234567890" );
 //        assert_eq!( r.has_token(),  true );
     }
 
     #[test]
     fn s_broken_payload() {
-        let mut r:Request = Request::new( "path/to/this\n{\"this\":\"that\"", "::1", "" );
+        let mut r:Request = Request::new( "path/to/this\n{\"this\":\"that\"", "::1", "127.0.0.1", "" );
         assert_eq!( r.get_query_param( "a"),  None );
         assert_eq!( r.get_query_param( "c" ),  None );
         assert_eq!( r.get_payload_param( "this" ),  None );

@@ -33,7 +33,8 @@ pub struct API {
     request_set: bool,
     routing_json: Value,
     routing_file_path: String,
-    routing_file_read: bool
+    routing_file_read: bool,
+    pub local_ip_address: String // corresponds to muscle.ini, no checks made. Needed for shutdown and reload requests
 }
 
 #[derive(Serialize, Deserialize, Debug)]
@@ -66,7 +67,8 @@ impl API{
     ///
     /// The API struct remains initialized with the API. In order to check 
     /// a new request, call .set_request.
-    pub fn new( pg_token_name: &str, pg_setvar_prefix: &str, s_routing_file: &str ) -> Self{
+    pub fn new( addr: &str, pg_token_name: &str, pg_setvar_prefix: &str, s_routing_file: &str ) -> Self{
+
         API{
             checked_query_parameters: vec![],
             problems_query_parameters: S_EMPTY,
@@ -81,7 +83,8 @@ impl API{
             routing_file_read: false,
             routing_json: serde_json::from_str("{}").unwrap(),
             request: Request::default(),
-            request_set: false
+            request_set: false,
+            local_ip_address: addr.to_string()
         }
     }
 
@@ -213,6 +216,7 @@ impl API{
         // Check if an authentication is needed, and if so, 
         // if one is set. Contains no validation of token,
         // just a check if one was handed over.
+        // @TODO What does this code really do?
         if self.request.api_needs_auth == Authentication::NEEDED {
             if !self.request.has_valid_auth() {return 
                 String::from("API requires valid authentication for this request, but none was found");}
@@ -321,10 +325,10 @@ impl API{
     pub fn get_checked_combined_param_vals( &mut self ) -> Vec<&ParamVal>{
         self.check_query_parameters();
         self.check_post_parameters();
-        let mut c_post = API::get_param_vals( &self.checked_post_parameters );
-        let mut c_query = API::get_param_vals( &self.checked_query_parameters );
-        c_post.append( &mut c_query );
-        c_post
+        let mut checked_post_values = API::get_param_vals( &self.checked_post_parameters );
+        let mut checked_get_values = API::get_param_vals( &self.checked_query_parameters );
+        checked_post_values.append( &mut checked_get_values );
+        checked_post_values
     }
 
     /// Name of token to set in database
@@ -399,8 +403,8 @@ impl API{
 
     // Utility for prepared statement that needs a vector of 
     // just the values of checked parameters
-    fn get_param_vals( checked: &Vec<CheckedParam> ) -> Vec<&ParamVal>{
-        checked.into_iter().map( |y| &y.value ).collect()
+    fn get_param_vals( checked_parameters: &Vec<CheckedParam> ) -> Vec<&ParamVal>{
+        checked_parameters.into_iter().map( |y| &y.value ).collect()
     }
 
     // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -447,17 +451,20 @@ impl API{
         self.problems_post_parameters = splitter.1;
     }
 
+    ///
+    /// separate UnCheckedParameters into checked parameters and a String containing
+    /// problem information.
     fn split_problems( params: &Vec<UnCheckedParam> ) -> ( Vec<CheckedParam>, String ){
-        let mut t1:Vec<CheckedParam> = vec![];
+        let mut successfully_checked_params:Vec<CheckedParam> = vec![];
         let mut s_problems = "".to_string();
 
-        for x in params{
-            if API::is_no_problem( &x.problem ) {
-                if API::is_not_superfluous( &x.problem ) 
-                    {t1.push( CheckedParam{ name: x.name.to_owned(), value: x.value.to_owned() } );}
-            }else { s_problems.push_str( &x.problem );}
+        for unchecked_param in params{
+            if API::is_no_problem( &unchecked_param.problem ) {
+                if API::is_not_superfluous( &unchecked_param.problem ) 
+                    {successfully_checked_params.push( CheckedParam{ name: unchecked_param.name.to_owned(), value: unchecked_param.value.to_owned() } );}
+            }else { s_problems.push_str( &unchecked_param.problem );}
         };
-        ( t1, s_problems )
+        ( successfully_checked_params, s_problems )
     }
 
     /// The `problem` property of this UnCheckedParam does 
@@ -479,10 +486,11 @@ impl API{
         par != API::SUPERFLUOUS_PARAMETER
     }
 
+    // @TODO see also ~220: document authentication stuff
     fn get_auth_claim_items_from_api( &mut self ) -> Vec<ClaimItem>{
         let s_method = Request::get_method_as_str( self.request.method );
         let s_path = &self.request.url;
-        let result2: Vec<ClaimItem> = match serde_json::from_value( self.routing_json[ API::API_PATHS ]
+        let result: Vec<ClaimItem> = match serde_json::from_value( self.routing_json[ API::API_PATHS ]
             [ s_path ]
             [ s_method ]
             [ "x-claim-custom" ].clone() ){
@@ -494,7 +502,7 @@ impl API{
                 vec![]
             }
         };
-        result2
+        result
     }
 
     /// Depending on the parameter type (payload or query),
@@ -502,7 +510,7 @@ impl API{
     ///
     /// panics if api no valid JSON.
     /// @TODO method too long.
-    /// @TODO IMPORTANT: disambiguate if there IS NO ROUTE from if IT HAS NO PARAMETERS.
+    /// @TODO IMPORTANT: disambiguate if there IS NO ROUTE from if IT HAS NO PARAMETERS. (Still valid?)
     fn get_parameters_from_api( &mut self, param_type: u8 ) -> Option<Vec<APIParam>> {
 
         let s_method = Request::get_method_as_str( self.request.method );
@@ -511,10 +519,7 @@ impl API{
 
         if param_type == API::PARAM_TYPE_PAYLOAD {
 
-            // Wir gehen von $ref aus.
-            // $ref liefert als Wert einen pointer wie #/components/schemas/student_bemerkung, 
-            // von dem wir das einleitende "#" auslassen müssen:
-//            let s_pointer = match &self.api[ API::API_PATHS ]
+            // get parameter definition from $ref in openAPI schema
             let s_pointer = match self.routing_json[ API::API_PATHS ]
                 [ s_path ]
                 [ s_method ]
@@ -550,6 +555,7 @@ impl API{
             // If no parameters of the object are marked as required,
             // there's nothing to check
             // @PONDER: should this log an error? Or is this merely an INFO?
+            // @TODO: should *not* required params not at least be checked for their type?
             if s_required_sub == &Value::Null { 
                 error!("API is missing required components list of `{}` -> no route.", s_pointer);
                 return None; 
@@ -614,6 +620,8 @@ impl API{
     ///     (a) if the parameter is required, the check fails,
     ///     (b) if the parameter is *not* required, the check 'fails'
     ///         with the problem set to SUPERFLUOUS_PARAMETER.
+    ///
+    /// @TODO: call hierarchy of this function? Do I need to hand s_param_type as string at this point?
     fn check_parameter( s_param_name: &str, 
         b_param_required: &bool, 
         s_param_value: &Option<&str>, 
@@ -661,6 +669,7 @@ impl API{
         }
     }
 
+    // @TODO type of Date, type of JSON?
     fn get_type_as_configured( s_param_value: &str, s_param_type: &str ) -> Result<ParamVal, String>{
         match s_param_type {
             API::TYPE_STRING => Ok( ParamVal::Text( s_param_value.to_string() )),
@@ -683,21 +692,6 @@ impl API{
             _ => Err(format!("Not a known type: `{}`", s_param_type))
         }
     }
-
-//    fn read_api<P: AsRef<Path>>(path: P) -> Value {
-//
-//        // Open the file in read-only mode with buffer.
-//        let file = match File::open(path){
-//            Err( _e ) => panic!("Cannot find file with API configuration"),
-//            Ok ( f ) => f
-//        };
-//
-//        match serde_json::from_reader( BufReader::new( file )){
-//            Err( _e ) => panic!("Cannot parse file with API configuration"),
-//            Ok( api ) => api
-//        }
-//    }
-
 
     fn typetest_i64( val: &Value, s_param_name: &str ) -> UnCheckedParam{
         match val.is_i64(){
@@ -747,9 +741,8 @@ impl API{
 //        }
 //    }
 
+    // @TODO really? I don't get this. Why not s = val.as_string()?
     fn typetest_string( val: &Value, s_param_name: &str ) -> UnCheckedParam{
-        // if `val` is of type json:object, as_str() fails, and 
-        // we need to_string() instead.
         let s = match val.as_str(){
             Some( e ) => e.to_string(),
             _ => val.to_string()
@@ -758,6 +751,8 @@ impl API{
                         value: ParamVal::Text( s )}
     }
 
+    // @TODO typechecking seems full of redundancy in a go-through 
+    // and probably needs patient analysis
     fn report_missing_parameter( s_param_name: &str, s_param_type: &str, b_required: bool ) -> UnCheckedParam{
         if b_required {
             UnCheckedParam{ problem: format!("parameter \"{}\" is expected to be of \
@@ -795,10 +790,6 @@ impl API{
     /// value: [ value ]
     fn collect_payload_typecast_problems( s_param_name: &str, b_param_required: &bool, 
         s_param_value: Option<&Value>, s_param_type: &str ) -> UnCheckedParam{
-
-        // ... if type is wrong, return (ERR, EMPTY, EMPTY)
-        debug!( "getwrongtype ... name '{}' ... type '{}'... value '{:?}'", s_param_name, 
-            s_param_type, s_param_value);
 
         match s_param_type{
 

@@ -78,7 +78,7 @@ impl Request{
     ///   ...
     /// }
     /// ```
-    pub fn new( s_req: &str, s_ip_addr_client: &str, token_secret: &str ) -> Self {
+    pub fn new( s_req: &str, s_ip_addr_client: &str, s_local_ip: &str, token_secret: &str ) -> Self {
 
         // -----------------------------------------------------
         // Stream starts e.g. with "GET /path/to/foo?whater=1
@@ -88,8 +88,8 @@ impl Request{
         let url_plus_par: (&str, &str) = Request::get_url_plus_parms( &s_uri );
         let ct_payload_auth: (&str, &str, &str) = Request::get_content_payload_auth( &s_req );
 
-        let b_shut = Request::get_method( &s_first_line ) == RequestMethod::SHUTDOWN && s_ip_addr_client.eq("127.0.0.1");
-        let b_reload = Request::get_method( &s_first_line ) == RequestMethod::RELOAD && s_ip_addr_client.eq("127.0.0.1");
+        let b_shut = Request::get_method( &s_first_line ) == RequestMethod::SHUTDOWN && s_ip_addr_client.eq( s_local_ip );
+        let b_reload = Request::get_method( &s_first_line ) == RequestMethod::RELOAD && s_ip_addr_client.eq( s_local_ip );
         info!("Reload request? {}", b_reload);
         
         let claims = Request::get_auth_claims( ct_payload_auth.2.to_string(), token_secret.to_string() );
