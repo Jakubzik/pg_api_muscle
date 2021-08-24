@@ -1,14 +1,12 @@
 use deadpool_postgres::{Pool };
 use crate::API;
 use crate::ParamVal;
-// use crate::Request;
 use crate::RequestMethod;
 use crate::Authentication;
 use crate::CheckedParam;
 use tokio_postgres::{Client};
 use tokio_postgres::types::ToSql;
 use log::{error, info};
-
 
 const EMPTY_RESULT: &str = "{}"; // empty string is no JSON
 
@@ -20,7 +18,7 @@ const EMPTY_RESULT: &str = "{}"; // empty string is no JSON
 /// get_first_row 
 /// --------------
 /// Query database and retrieve the first 
-/// row handed back as query. (Queries 
+/// row. (Queries 
 /// ask for json aggregates of data, so 
 /// usually the first row contains all 
 /// information in an array).
@@ -38,9 +36,8 @@ const EMPTY_RESULT: &str = "{}"; // empty string is no JSON
 /// currently under construction, though
 ///
 pub async fn get_db_response( pool: &Pool, api: &mut API ) -> Result<String, String>{
-   let method = api.request.method;         
-//   let b_needs_auth = api.request.api_needs_auth == Request::API_NEEDS_AUTH_CONFIRMED; // JWT Token needed?
-   let b_needs_auth = api.request.api_needs_auth == Authentication::NEEDED; // JWT Token needed?
+   let http_method = api.request.method;         
+   let needs_auth = api.request.api_needs_auth == Authentication::NEEDED; // JWT Token needed?
 
    let mut client = match pool.get().await{
        Ok (cl) => cl,
@@ -50,7 +47,7 @@ pub async fn get_db_response( pool: &Pool, api: &mut API ) -> Result<String, Str
    // #HACK Timezone 
    adjust_timezone( &mut client, "Europe/Berlin" ).await;
 
-   if b_needs_auth{
+   if needs_auth{
        set_auth( &mut client, &api.get_pg_token_name().clone(), &api.request.get_auth(), &api.pg_set ).await;
    }
 
@@ -60,34 +57,35 @@ pub async fn get_db_response( pool: &Pool, api: &mut API ) -> Result<String, Str
    // POST => Insert into or Select
    // DELETE => Delete
    // PATCH => Update ... Where
-   match method{
+   match http_method{
        // ---------------------------------------- 
        // GET
        RequestMethod::GET => {
-           let s_sql = get_db_get_sql( api );
-           query_db( &mut client, b_needs_auth, &api.get_checked_query_param_vals(), &s_sql, method).await
+           let sql = get_db_get_sql( api );
+           query_db( &mut client, needs_auth, &api.get_checked_query_param_vals(), &sql, http_method).await
        },
 
        // ---------------------------------------- 
        // DELETE
        RequestMethod::DELETE => {
-           let s_sql = get_db_delete_sql( api );
-           query_db( &mut client, b_needs_auth, &api.get_checked_query_param_vals(), &s_sql, method).await
+           let sql = get_db_delete_sql( api );
+           query_db( &mut client, needs_auth, &api.get_checked_query_param_vals(), &sql, http_method).await
        },
 
        // ---------------------------------------- 
        // POST
        RequestMethod::POST => {
-           let s_sql = get_db_post_sql( api );
-           query_db( &mut client, b_needs_auth, &api.get_checked_post_param_vals(), &s_sql, method).await
+           let sql = get_db_post_sql( api );
+           query_db( &mut client, needs_auth, &api.get_checked_post_param_vals(), &sql, http_method).await
       },
 
       // ---------------------------------------- 
       // PATCH
        RequestMethod::PATCH => {
-           let s_sql = get_db_patch_sql( api );
-           query_db( &mut client, b_needs_auth, &api.get_checked_combined_param_vals(), &s_sql, method).await
+           let sql = get_db_patch_sql( api );
+           query_db( &mut client, needs_auth, &api.get_checked_combined_param_vals(), &sql, http_method).await
        },
+
        _ => Err( "Methode nicht implementiert".to_string() )
    }
 }
@@ -106,7 +104,7 @@ pub async fn get_db_response( pool: &Pool, api: &mut API ) -> Result<String, Str
 /// error: "EB failure" + error information
 async fn query_db( 
     client: &mut Client, 
-    unset_auth_after_query: bool,
+    clean_auth_after_query: bool,
     query_parameters: &Vec<&ParamVal>,
     sql: &str,
     method: RequestMethod) -> Result<String, String>{
@@ -115,16 +113,16 @@ async fn query_db(
     // INSERT, UPDATE, SELECT).
     if method != RequestMethod::DELETE {
         match get_first_row( client, &sql, Some( &query_parameters ) ).await{
-            Ok( r ) => {if unset_auth_after_query {unset_auth( client ).await;} Ok(r)},
-            Err( e ) => {if unset_auth_after_query {unset_auth( client ).await;}
+            Ok( r ) => {if clean_auth_after_query {unset_auth( client ).await;} Ok(r)},
+            Err( e ) => {if clean_auth_after_query {unset_auth( client ).await;}
                 error!("DB failure: `{}`", e);
                 Err( format!("Database could not complete the request: `{}`", e))
             }
         }
     }else{
         match query_execute_string( client, &sql, Some( &query_parameters ) ).await{
-            Ok( r ) => {if unset_auth_after_query {unset_auth( client ).await;} Ok(r)},
-            Err( e ) => {if unset_auth_after_query {unset_auth( client ).await;}
+            Ok( r ) => {if clean_auth_after_query {unset_auth( client ).await;} Ok(r)},
+            Err( e ) => {if clean_auth_after_query {unset_auth( client ).await;}
                 error!("DB failure: `{}`", e);
                 Err( format!("Database could not complete the request: `{}`", e))
             }
@@ -133,9 +131,8 @@ async fn query_db(
 }
 
 // Build SQL String for a patch request -> update ...
-//fn get_db_patch_sql( api: &mut API ) -> String{
 fn get_db_patch_sql( api: &mut API ) -> String{
-       let query = &api.get_operations_id();    // The query
+        let query = &api.get_operations_id();    // The query
         match api.get_checked_query_params().len(){
             0 => format!("update {} set {} returning row_to_json({}.*)::text;", query, 
                     get_parameter_assignment_csv( &api.get_checked_post_params( ) ), query),

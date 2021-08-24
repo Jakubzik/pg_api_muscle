@@ -6,8 +6,14 @@
 /**
 * TODO
 * ====
+* - ein paar Sachen aufhübschen
+* - Intro-Text schreiben
+* - DATENBANKKONTAKT!! Sowohl um Sachen zu holen (Kategorien, Tags, Kontexte) als auch um Fragen, Antwortoptionen und Kontexte etc. zu speichern
+* 		-> Momentan ist das noch über JSON
 * - Testen, testen
 **/
+
+/* vielleicht TODO: window.onload resetAllFields() -> alle Felder leeren, damit bei F5 auch alles leer ist */
 
 
 var g_DEBUG_LEVEL = 3;	// 0=silent, 1=err, 2=info, 3 = debug
@@ -34,22 +40,10 @@ let eTagSelectBox = document.getElementById('e_tagSelection');
 let aRadioOpts = document.getElementsByClassName('answer_radio');
 
 
-
-
 // Funktional-Variablen
 
 let b_contextQ = false; // wenn "speichern"/"submit" geklickt wird soll geprüft werden, ob das eine Frage mit Kontext ist (dann: "weitere Frage eingeben" Box) oder nicht.
 let b_newContext = false; // um beim Klick auf "speichern"/"submit" an die DB weiterzureichen, ob ein neuer Kontext angelegt werden soll.
-
-
-
-/* vielleicht TODO: window.onload resetAllFields() -> alle Felder leeren, damit bei F5 auch alles leer ist */
-
-// TEST
-window.onload = resetAllFields();
-
-
-
 
 /**
 * altes FETCH aus statischem JSON; soll jetzt durch Datenbankkommunikation abgelöst werden.
@@ -163,9 +157,9 @@ eTaskSelect.onchange = function(){
 		let selTaskID = selectedTask.substring(selectedTask.indexOf('-') + 1); // kürzt die ID vom HTML-Element auf die aufgabenstellung_id
 		aAufgabentext.forEach(function(aufgaben_item) {
 			if (aufgaben_item.aufgabenstellung_id.toString() == selTaskID) {
-				eTaskText.innerHTML = linebreakFix(aufgaben_item.aufgabenstellung_text);
+				eTaskText.innerHTML = aufgaben_item.aufgabenstellung_text;
 				if (aufgaben_item.aufgabenstellung_beispiel != "") { // wenn es zu der Aufgabenstellung ein Beispiel gibt
-					eTaskExample.innerHTML = linebreakFix(aufgaben_item.aufgabenstellung_beispiel);
+					eTaskExample.innerHTML = aufgaben_item.aufgabenstellung_beispiel;
 					eTaskExample.style.display = 'block';
 				} else {
 					eTaskExample.innerHTML = ""; // wenn es zu der Aufgabenstellung kein Beispiel gibt soll die Beispielbox leer und auch ausgeblendet sein
@@ -176,7 +170,18 @@ eTaskSelect.onchange = function(){
 	}
 }
 
+/**
+ *
+ * let eTaskSelect = document.getElementById('e_taskSelect');
+ * let eTaskText = document.getElementById('e_taskText');
+ * **/
 
+/** TODO
+* Es gibt:
+*   aufgabenstellung_text -> wird in einem div statisch angezeigt (nach auswahl) -> erst später
+*   aufgabenstellung_beispiel -> wird (falls vorhanden) in einem div angezeigt -> späte
+* onchange: text usw. anzeigen, gewaehlte option loggen beim speichernr
+**/
 
 
 /* Wenn die "Fragekontext?"-Checkbox geklickt wird -> prüfen, ob ja/nein. Falls ja: Auswahlliste für Kontexte einblenden (neuer Kontext oder bestehenden Text auswählen). Falls nein: Kontext-Select zurücksetzen (damit die untere Box auch geleert wird) und ausblenden; Text- und Source-Box ausblenden; Kontext-Select ausblenden. */
@@ -216,13 +221,13 @@ function newcontext() {
 
 /* wenn eine neue Frage für einen bestehenden Kontext eingegeben werden soll: befüllt die Kontext-Box und Source-Box und sperrt sie, damit der Text nicht bearbeitet werden kann. (Wenn eine neue Frage für einen bestehenden Text angelegt wird, soll der nicht verändert werden, da in der Datenbank ja andere Fragen damit verknüpft sind.) */
 
-
+// momentan wird das direkt als string übertragen, mit <br> tags usw. Soll das noch visuell sauber formatiert werden? A TO H: Wie das generell funktioniert, also z.B. Zeilenumbruch-Formatierung oder sogar kursivierung zu übertragen, ggfs. Sonderzeichen und so -- not sure; help? 
 
 function existingcontext(selectedOpt) {
 	aContext.forEach(function(context_item) {
 		let selContextID = selectedOpt.substring(selectedOpt.indexOf('-') + 1); // kürzt die ID vom HTML-Element auf die Kontext-ID
 		if (context_item.fragekontext_id.toString() == selContextID) {
-			eContextBox.value = linebreakFixInput(context_item.fragekontext_text);
+			eContextBox.value = context_item.fragekontext_text;
 			eContextSource.value = context_item.fragekontext_quelle;
 			eContextBox.disabled = true;
 			eContextSource.disabled = true;
@@ -303,7 +308,51 @@ function checkRequired() {
 
 
 
+// sammelt die eingegebenen Daten und baut ein Array
 
+/**
+ *
+ * 2021-05-29
+ * NEUER PLAN
+ * ==========
+ *
+ * Objekt so konstruieren:
+ *
+  frage:{
+    fragekategorie_id: 2,
+    fragekontext_id: 1,
+    frage_text: "She _____ you",
+    frage_tags:[3,5,7,11],
+    antwortoptionen: [{
+     	 option_id: "A",
+     	 text: "misses"
+        },
+	{
+	 option_id: "B",
+	 text: "loves"
+	},
+	{
+	 option_id: "C",
+	 text: "needs"
+	}, 
+	{
+	 option_id: "D",
+	 text: "all of the above",
+	 option_correct: true
+	}]
+  }
+ *
+ * Dann Einträge anpassen statt für jedes ein eigenes Objekt zu bauen
+ *
+ * FRAGE (A TO H): muss das eigentlich ein Array sein, oder ginge auch:
+ *
+   oFrage = {fragekategorie_id: 2, fragekontext_id: 1, ...} 
+ *
+ * weil wir ja ohnehin immer nur eine Frage at a time schicken?
+ *
+ * (testweise jetzt mal so)
+ *
+ * **/
 
 // nach dem Speichern: dialogbox einblenden
 
@@ -345,7 +394,6 @@ function keep_editing(){
 
 let iContextID;  // die Kontext-ID falls es eine Kontext-Frage ist (bestehende ID, oder dann neu angelegte). Soll auch außerhalb dieser Funktion nutzbar sein, für das Neuladen von Fragekontexten.
 let iCatID;
-let iAufgID = 0;
 let oFrage;
 
 function final_save(){  // zur Übersichtlichkeit in einzelne Funktionen aufteilen?
@@ -358,10 +406,6 @@ function final_save(){  // zur Übersichtlichkeit in einzelne Funktionen aufteil
 	let selectedCat = eCatSelect.options[eCatSelect.selectedIndex].id;
 	iCatID = parseInt(selectedCat.substring(selectedCat.indexOf('-') + 1), 10);
 	
-	// Aufgabenstellung 
-	let selectedAufg = eTaskSelect.options[eTaskSelect.selectedIndex].id;
-	iAufgID = parseInt(selectedAufg.substring(selectedAufg.indexOf('-') + 1), 10);
-	
 	// Fragetext
 	let sFrageText = document.getElementById('questionText').value;
 	
@@ -369,7 +413,6 @@ function final_save(){  // zur Übersichtlichkeit in einzelne Funktionen aufteil
 	oFrage = {
 			fragekategorie_id: iCatID,
 			fragekontext_id: "nichts", // ist hier ein i (oder minuszahl) besser als ein str? egal?
-			aufgabenstellung_id: iAufgID,
 			frage_text: sFrageText,
 			antwortoptionen: [],
 			frage_tags: []
@@ -389,7 +432,7 @@ function final_save(){  // zur Übersichtlichkeit in einzelne Funktionen aufteil
 		});
 
 	// pro Antwort (von 4): option_id, option_text, option_correct einsammeln
-		oFrage.antwortoptionen.push( 
+		oFrage.antwortoptionen.push( // A TO H: geht das so?
 			{
 				option_id: antwortID,  // A, B, C, D
 				option_text: answer.value, // der eingegebene Antworttext
@@ -411,6 +454,7 @@ function final_save(){  // zur Übersichtlichkeit in einzelne Funktionen aufteil
 	}
 
 	// Kontext
+	/* A TO H: müssen wir noch besprechen; ggfs. auslagern und umsortieren */
 	if (b_contextQ) { // falls es eine Kontextfrage ist
 		if (b_newContext) { // d.h. neuer Kontext soll angelegt werden 
 			// -> Textauszug Inhalt und Quellenangabe sammeln
@@ -423,7 +467,9 @@ function final_save(){  // zur Übersichtlichkeit in einzelne Funktionen aufteil
 			if (g_DEBUG_LEVEL >= 3) console.log('[DEBUG:] neuer Text erfasst');
 			if (g_DEBUG_LEVEL >= 2) console.log('[INFO:] das Kontext-Objekt ist: ');
 			if (g_DEBUG_LEVEL >= 2) console.log(oKontext);
+			/* A TO H: Das Kontext-Objekt an die DB schicken, als neuen Kontext anlegen, kontext-ID zurückliefern. */
 
+			/* TEST */
 
 		let kontext_url = "https://" + window.location.hostname + ":" + window.location.port + "/fragekontext";
 
@@ -451,6 +497,7 @@ function final_save(){  // zur Übersichtlichkeit in einzelne Funktionen aufteil
 	       		 console.log(err);
 		});
 
+			/* TEST ENDE */
 
 		} else { // wenn KEIN neuer Kontext angelegt, sondern ein bestehender genutzt wird
 			let selContext = eContextSelect.options[eContextSelect.selectedIndex].id;
@@ -528,14 +575,13 @@ function frageobjekt_senden(kontextid) {
 * [=> done]
 *   - falls fragekontext y und neuer text -> textauszug und quellenangabe
 *   - falls fragekontext y und existing text -> fragekontext_id 
-* [=> done]
+* [=> TODO]
 *
-* Zur Nutzerführung: 
+* Zur Nutzerführung: [=> TODO]
 *   - Erfolgsmeldung anzeigen? ("vielen Dank für Ihre Einreichung, Ihre Frage wurde gespeichert"?)
 *   - falls b_contextQ = true -> Meldung: weitere Frage zu diesem Text eingeben? 
 *   	- falls ja: vorigen Kontext (egal ob der neu oder bestehend war) und Quellenangabe anzeigen, aber sperren (context.disabled = true), damit es nicht geändert werden kann. b_newContext = false. Frage und Antwort-Felder löschen, radio buttons leeren, tags leeren. Kategorie-Select und Kontext-Select behalten, Kontext-Checkbox.checked. 
 * 	- falls nein: alle Felder zurücksetzen? 
-* - TODO hier: testen ... 
 *
 * **/
 
@@ -569,14 +615,14 @@ function reloadContext() {
 	 *
 	 * Das heißt also:
 	 * ---------------
-	 *  Wenn ein neuer Text abgespeichert wird, gibt die Datenbank
-	 *  nach dem Speichern die ID von diesem neu angelegten Text zurück.
+	 *  Wenn ein neuer Text abgespeichert wird, müsste die Datenbank
+	 *  nach dem Speichern die ID von diesem neu angelegten Text zurückgeben.
 	 *  Dann wird das Kontext-Select neu geladen
 	 *  und der neu angelegte Text ausgewählt 
 	 *  und alle anderen Felder geleert. 
+	 *  (das mach ich alles im JS, brauche aber eben die neue ID aus der Datenbank)
 	 *
 	 * **/
-	 
 // iCatID
 	// vorher gewählte Kategorie wieder klicken
 	let cat_value = "kategorie_" + iCatID;
@@ -633,11 +679,6 @@ function resetAllFields() {
 	eContextSelect.selectedIndex = null;
 	// kategorie select
 	eCatSelect.selectedIndex = null;
-	// aufgabenstellung select
-	eTaskText.innerHTML = "Zusätzlich zum Fragetext kann im Aufnahmetest eine Aufgabenstellung zu einer Frage oder einer Gruppe von Fragen angezeigt werden.";
-	eTaskExample.innerHTML = "";
-	eTaskExample.style.display = 'none';
-	eTaskSelect.selectedIndex = 0;
 	// bools schauen -- context q, new context, req fields? (redundant) TODO
 	b_contextQ = false; // falls eine neue Frage zum selben Kontext eingegeben werden soll, wird das von selbst wieder aktiviert
 	b_newContext = false;
@@ -650,18 +691,4 @@ function closeSaveDialog() {
 	e_saveContextN.style.display = 'none';
 	e_saveDialog.style.display = 'none';
 	e_overlayBox.style.display = 'none';
-}
-
-
-function linebreakFix(textblock) {
-//	textblock = textblock.toString();
-	textblock = textblock.replace(/\\n/g, "<br>");
-	textblock = textblock.replace(/&nbsp;/g, " ");
-	return textblock;
-}
-
-function linebreakFixInput(textblockB) {
-	textblockB = textblockB.replace(/\\n/g, ' \n ');
-	textblockB = textblockB.replace(/&nbsp;/g, " ");
-	return textblockB;
 }

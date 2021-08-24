@@ -75,6 +75,8 @@ impl Response{
     /// Returns .1 status and headers, .2 content, .3 flag indicating if this was a request to a static resource
     pub fn get_response( self ) -> (String, Vec<u8>, bool){
         (format!( "{}\r\nContent-Length: {}\r\n{}\r\n", self.http_status, self.http_content.len(), self.content_type_header), self.http_content, self.is_static)
+// the following line works ... 
+//        (format!( "{}\r\n{}\r\n", self.http_status, self.content_type_header), self.http_content, self.is_static)
     }
 
     /// Returns .1 status and headers, .2 content
@@ -151,7 +153,7 @@ impl Response{
         // Static request, send file
         if api.request.is_static() {
             let f_path = "static/".to_owned() + &api.request.url.chars().skip(7).collect::<String>().to_string();
-            let msg_not_found = "Sorry, requested ressource not found".to_string();
+            let msg_not_found = "Sorry, requested ressource not found. ".to_string();
 
             //Binary ... look at this here: https://docs.rs/base64/0.13.0/base64/
             //https://stackoverflow.com/questions/57628633/how-to-properly-format-in-rust-an-http-response-with-a-media-file
@@ -160,7 +162,7 @@ impl Response{
                         let mut buffer = Vec::new();
                         match file.read_to_end(&mut buffer){
                             Ok( _ ) => buffer,
-                            _ => b"Error reading file.".to_vec()
+                            _ => b"Error reading file. ".to_vec()
                         }
                     },
                     _ => msg_not_found.to_string().as_bytes().to_vec()
@@ -183,8 +185,8 @@ impl Response{
                     Ok( s ) => ( Response::HTTP_200.to_string(), s.as_bytes().to_vec() ),
 
                     Err( e ) => {info!("...db problem on GET: {}", e);
-                        ( Response::HTTP_400.to_string() ,serde_json::to_string( 
-                                &APIError{ message: e.to_string(), hint: "No hint".to_string()}).unwrap().as_bytes().to_vec()) 
+                        ( Response::HTTP_400.to_string() ,format!("{} ", serde_json::to_string( 
+                                &APIError{ message: e.to_string(), hint: "No hint".to_string()}).unwrap()).as_bytes().to_vec())
                     }
                 },
 

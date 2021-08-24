@@ -1,0 +1,54 @@
+{
+  "REM": "For every path/method there must be a parameters attribute (that can be empty, though)",
+  "openapi": "3.0.1",
+  "info": {
+    "title": "Anglistik AP",
+    "description": "",
+    "version": "0.0.1"
+  },
+  "externalDocs": {
+    "description": "",
+    "url": "http://www.as.uni-heidelberg.de"
+  },
+  "servers": [
+    {
+      "url": "https://147.142.232.252"
+    }
+  ],
+  "paths": {
+    "kapitel": {
+      "get": {
+        "operationId": "web_api.kapitel",
+        "parameters": [
+          {
+            "name": "kapitel_id",
+            "description": "Id des Kapitels",
+            "required": true,
+            "in": "query",
+            "schema": {
+              "type": "integer",
+              "format": "integer"
+            }
+          }
+        ]
+      }
+    },
+    "toc": {
+      "get": {
+        "operationId": "web_api.toc",
+        "parameters": [
+          {
+            "name": "buch_id",
+            "description": "Id des Buchs",
+            "required": true,
+            "in": "query",
+            "schema": {
+              "type": "integer",
+              "format": "integer"
+            }
+          }
+        ]
+      }
+    }
+  }
+}

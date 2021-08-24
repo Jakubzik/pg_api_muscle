@@ -25,7 +25,6 @@ pub struct Request {
     payload: Value
 }
 
-
 impl Request{
 
     /* Constructor */
