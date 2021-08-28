@@ -1,4 +1,4 @@
-use std::{borrow::BorrowMut, env, error::Error, fmt::{self, Formatter, Display}, fs::File,io::prelude::*, process::exit, sync::Arc};
+use std::{borrow::BorrowMut, convert::TryInto, env, error::Error, fmt::{self, Formatter, Display}, fs::File, io::prelude::*, process::exit, sync::Arc};
 use futures::lock::Mutex;
 use tini::Ini;
 use native_tls::Identity;
@@ -102,21 +102,96 @@ struct APIError {
     hint: String
 }
 
+#[derive(Serialize, Clone, Deserialize, Debug)]
+pub enum CPRelation{
+    Unknown,
+    Equal,
+    LessThan,
+    GreaterThan,
+    LessOrEqual,
+    GreaterOrEqual,
+    Like,
+    In
+}
+
+impl CPRelation{
+    fn db_representation(&mut self) -> &str{
+        match self {
+            CPRelation::Unknown => "",
+            CPRelation::Equal => "=",
+            CPRelation::LessThan=> "<",
+            CPRelation::GreaterThan => ">",
+            CPRelation::LessOrEqual=> "<=",
+            CPRelation::GreaterOrEqual=> ">=",
+            CPRelation::Like => " LIKE ",
+            CPRelation::In => " IN "
+        }
+    }
+
+//    pub fn new( s_param_name: &str ) -> Self{
+//        if s_param_name.len() < 3{ CPRelation::Unknown }
+//        let pt = s_param_name.find(".");
+//        match s_param_name.chars().take(pt){
+//            "eq" => CPRelation::Equal,
+//            "lt" => CPRelation::LessThan,
+//            "le" => CPRelation::LessOrEqual,
+//            "ge" => CPRelation::GreaterOrEqual,
+//            "gt" => CPRelation::GreaterThan,
+//            "li" => CPRelation::Like,
+//            "in" => CPRelation::In,
+//            _ => CPRelation::Unknown
+//        }
+//    }
+
+    fn url_representation(&mut self) -> &str{
+        match self {
+            CPRelation::Unknown => "",
+            CPRelation::Equal => "eq.",
+            CPRelation::LessThan=> "lt.",
+            CPRelation::GreaterThan => "gt.",
+            CPRelation::LessOrEqual=> "le.",
+            CPRelation::GreaterOrEqual=> "ge.",
+            CPRelation::Like => "li.",
+            CPRelation::In => "in."
+        }
+    }
+}
+
+// Adding Default because Clone for UnCheckedParam is not satisfied
+impl Default for CPRelation {
+    fn default() -> Self { CPRelation::Unknown }
+}
+
+// Adding Default because Clone for UnCheckedParam is not satisfied
+impl Default for ParamVal {
+    fn default() -> Self { ParamVal::Text( "not initialized".to_string() ) }
+}
+
 // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 // UnCheckedParam are compared against
 // API and transformed to CheckedParam if
 // they contain no problems.
-#[derive(Debug, Clone)]
+#[derive(Debug, Default, Clone)]
 pub struct UnCheckedParam{
     problem: String,
     name: String,
+    relation: CPRelation,
     value: ParamVal
 }
 
 #[derive(Debug, Clone)]
 pub struct CheckedParam{
     name: String,
+    relation: CPRelation,
     value: ParamVal
+}
+
+impl CheckedParam {
+    pub fn new(name: String, value: ParamVal) -> Self { CheckedParam { name, relation: CPRelation::Unknown, value } }
+}
+
+impl UnCheckedParam{
+    pub fn new(name: String, value: ParamVal, problem: String) -> Self { UnCheckedParam { problem, name, relation: CPRelation::Unknown, value } }
 }
 
 // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -136,7 +211,8 @@ pub struct MuscleConfig{
     pg_setvar_prefix: String,        // Pg prefix for variables that are set in postgres through the token: @TODO
     timezone: String,                // Timezone to set Pg to
     server_read_timeout_ms: u64,     // Tweak @TODO
-    server_read_chunksize: usize     // Tweak @TODO
+    server_read_chunksize: usize,     // Tweak @TODO
+    use_eq_syntax_on_url_parameters: bool // translate https://url?param=eq.5 to "param=5" (...lt.5 to "param < 5"). @TODO. true not yet implemented (August 24, 21)
 }
 
 #[tokio::main]
@@ -453,6 +529,9 @@ fn get_conf( s_file: &str ) -> MuscleConfig{
             &format!("{}{}", s_err, "`pg_token_secret` in section `Authorization`")[..]),
 
         pg_setvar_prefix: conf.get("Authorization", "pg_setvar_prefix").expect(
-            &format!("{}{}", s_err, "`pg_setvar_prefix` in section `Authorization`")[..])
+            &format!("{}{}", s_err, "`pg_setvar_prefix` in section `Authorization`")[..]),
+
+        use_eq_syntax_on_url_parameters: conf.get("Service", "api_use_eq_syntax_on_url_parameters").expect(
+            &format!("{}{}", s_err, "`api_use_eq_syntax_on_url_parameters` in section `Service`")[..])
     }
 }
