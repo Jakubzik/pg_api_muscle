@@ -23,6 +23,9 @@ extern crate serde;
 extern crate log;
 extern crate serde_json;
 
+//#[json]
+use serde_json::Value;
+
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum RequestMethod{
     GET,
@@ -33,6 +36,28 @@ pub enum RequestMethod{
     SHUTDOWN,
     RELOAD,
     UNKNOWN
+}
+
+pub enum ParameterType{
+    STRING,
+    INTEGER,
+    BIGINT,
+    BOOLEAN,
+    NUMBER,
+    UNKNOWN
+}
+    
+impl ParameterType{
+    pub fn from( s_name: &str ) -> Self{
+        match &s_name.to_ascii_lowercase()[..]{
+            "string" => ParameterType::STRING,
+            "integer" => ParameterType::INTEGER,
+            "boolean" => ParameterType::BOOLEAN,
+            "bigint" => ParameterType::BIGINT,
+            "number" => ParameterType::NUMBER,
+            _ => ParameterType::UNKNOWN,
+        }
+    }
 }
 
 impl Default for RequestMethod {
@@ -64,7 +89,7 @@ impl Default for Authentication {
     fn default() -> Self { Authentication::UNKNOWN }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum ParamVal {
     Int(i32),
     BigInt(i64),
@@ -102,10 +127,11 @@ struct APIError {
     hint: String
 }
 
-#[derive(Serialize, Clone, Deserialize, Debug)]
+#[derive(PartialEq,Serialize, Clone, Deserialize, Copy, Debug)]
 pub enum CPRelation{
     Unknown,
     Equal,
+    NotEqual,
     LessThan,
     GreaterThan,
     LessOrEqual,
@@ -115,45 +141,50 @@ pub enum CPRelation{
 }
 
 impl CPRelation{
-    fn db_representation(&mut self) -> &str{
+    fn db_representation(&mut self) -> String{
         match self {
-            CPRelation::Unknown => "",
-            CPRelation::Equal => "=",
-            CPRelation::LessThan=> "<",
-            CPRelation::GreaterThan => ">",
-            CPRelation::LessOrEqual=> "<=",
-            CPRelation::GreaterOrEqual=> ">=",
-            CPRelation::Like => " LIKE ",
-            CPRelation::In => " IN "
+            CPRelation::Unknown => "".to_string(),
+            CPRelation::Equal => "=".to_string(),
+            CPRelation::NotEqual => "!=".to_string(),
+            CPRelation::LessThan=> "<".to_string(),
+            CPRelation::GreaterThan => ">".to_string(),
+            CPRelation::LessOrEqual=> "<=".to_string(),
+            CPRelation::GreaterOrEqual=> ">=".to_string(),
+            CPRelation::Like => " LIKE ".to_string(),
+            CPRelation::In => " IN ".to_string()
+        }
+    }
+    fn db_rep( rel: &CPRelation ) -> String{
+        match rel {
+            CPRelation::Unknown => "".to_string(),
+            CPRelation::Equal => "=".to_string(),
+            CPRelation::NotEqual => "!=".to_string(),
+            CPRelation::LessThan=> "<".to_string(),
+            CPRelation::GreaterThan => ">".to_string(),
+            CPRelation::LessOrEqual=> "<=".to_string(),
+            CPRelation::GreaterOrEqual=> ">=".to_string(),
+            CPRelation::Like => " LIKE ".to_string(),
+            CPRelation::In => " IN ".to_string()
         }
     }
 
-//    pub fn new( s_param_name: &str ) -> Self{
-//        if s_param_name.len() < 3{ CPRelation::Unknown }
-//        let pt = s_param_name.find(".");
-//        match s_param_name.chars().take(pt){
-//            "eq" => CPRelation::Equal,
-//            "lt" => CPRelation::LessThan,
-//            "le" => CPRelation::LessOrEqual,
-//            "ge" => CPRelation::GreaterOrEqual,
-//            "gt" => CPRelation::GreaterThan,
-//            "li" => CPRelation::Like,
-//            "in" => CPRelation::In,
-//            _ => CPRelation::Unknown
-//        }
-//    }
-
-    fn url_representation(&mut self) -> &str{
-        match self {
-            CPRelation::Unknown => "",
-            CPRelation::Equal => "eq.",
-            CPRelation::LessThan=> "lt.",
-            CPRelation::GreaterThan => "gt.",
-            CPRelation::LessOrEqual=> "le.",
-            CPRelation::GreaterOrEqual=> "ge.",
-            CPRelation::Like => "li.",
-            CPRelation::In => "in."
+    pub fn new( s: &str ) -> Self{
+        match s{
+            "eq" => CPRelation::Equal,
+            "ne" => CPRelation::NotEqual,
+            "lt" => CPRelation::LessThan,
+            "le" => CPRelation::LessOrEqual,
+            "gt" => CPRelation::GreaterThan,
+            "ge" => CPRelation::GreaterOrEqual,
+            "like" => CPRelation::Like,
+            "in" => CPRelation::In,
+            _ => CPRelation::Unknown
         }
+    }
+}
+impl fmt::Display for CPRelation {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+      write!(f, "{}", CPRelation::db_rep( self) )
     }
 }
 
@@ -171,12 +202,13 @@ impl Default for ParamVal {
 // UnCheckedParam are compared against
 // API and transformed to CheckedParam if
 // they contain no problems.
-#[derive(Debug, Default, Clone)]
+#[derive(Debug, Default, Clone, PartialEq)]
 pub struct UnCheckedParam{
     problem: String,
     name: String,
-    relation: CPRelation,
-    value: ParamVal
+    relation: CPRelation,           // If 'extended syntax' is used, =5 must be handed over as =eq.5,
+    use_extended_syntax: bool,      // and =lt.6 represents <6 for the database. Possible relations (=, < etc.)
+    value: ParamVal                 // are represented in CPRelation 
 }
 
 #[derive(Debug, Clone)]
@@ -187,11 +219,162 @@ pub struct CheckedParam{
 }
 
 impl CheckedParam {
-    pub fn new(name: String, value: ParamVal) -> Self { CheckedParam { name, relation: CPRelation::Unknown, value } }
+    pub fn new(name: String, value: ParamVal) -> Self { CheckedParam { name, relation: CPRelation::Equal, value } }
+    pub fn new_ext(name: String, value: ParamVal, relation: CPRelation) -> Self { CheckedParam { name, relation, value } }
 }
 
-impl UnCheckedParam{
-    pub fn new(name: String, value: ParamVal, problem: String) -> Self { UnCheckedParam { problem, name, relation: CPRelation::Unknown, value } }
+/**
+ * UnCheckedParams represent both query parameters (which 
+ * come by name and a String value) and payload parameters.
+ * 
+ * Payload parameters come in a Serde value (rather than a String
+ * value)
+ */
+impl UnCheckedParam{ 
+//    pub fn new(name: String, value: ParamVal, problem: String) -> Self { UnCheckedParam { problem, name, relation: CPRelation::Unknown, value } }
+    pub fn new_query_parameter(name: &str, value: &str, expected_type: ParameterType) -> Self{
+        let check = UnCheckedParam::get_typecheck_of_query_parameter( value, expected_type ); // .1 ist Problem, .0 ist value
+        UnCheckedParam { problem: check.1, name: name.to_string(), relation: CPRelation::Unknown, value: check.0, use_extended_syntax: false } 
+    }
+
+    // Query parameter with 'extended syntax,'
+    // meaning that = is represented as =eq.,
+    // < is represented as =lt. etc.
+    pub fn new_query_parameter_ext(name: &str, value: &str, expected_type: ParameterType) -> Self{
+        let extension = UnCheckedParam::analyze_extended_val( value );
+        if extension.1 == CPRelation::Unknown{ UnCheckedParam::new_err_query_ext_param_with_unknown_relation(name, value)}
+        else{
+            let check = UnCheckedParam::get_typecheck_of_query_parameter( &extension.0[..], expected_type ); // .1 ist Problem, .0 ist value
+            UnCheckedParam { problem: check.1, name: name.to_string(), relation: extension.1, value: check.0, use_extended_syntax: true } 
+        }
+    }
+
+    // Used for the analysis of query parameters with extended
+    // values (constructred through .new_query_parameter_ext)
+    //
+    // Splits ext_value into an actual value and the relation
+    // that the ext_value represents.
+    // 
+    // ext_value is "eq.7," "lt.0," "ne.Ham" etc.
+    // assert_eq!( analyze_extended_val(&"eq.7"), ("7", CPRelation::Bigint))
+    // 
+    // If extvalue contains no "." character, or if the slice
+    // before "." does not represent a known relation, 
+    // (ext_value, CPRelation::Unknown) is returned.
+    fn analyze_extended_val( ext_value: &str ) -> (String, CPRelation){
+        match ext_value.chars().position(|c| c == '.'){
+            Some( pos ) => (ext_value.chars().skip(pos+1).collect(),CPRelation::new( &ext_value.chars().take(pos).collect::<String>()[..])),
+            _ => (ext_value.to_string(), CPRelation::Unknown )
+        }
+    }
+
+    // @TODO: required needs to be followed up: the information is 
+    // handed over as a parameter here, NEEDS THINKING
+    // (Can there be a missing value of a non-required parameter?)
+    pub fn new_payload_parameter(name: &str, o_value: Option<&Value>, expected_type: ParameterType, required: bool) -> Self{
+         
+        match o_value{
+            Some( value ) => {
+                info!("Creating new payload param with value: >{:?}<", value);
+                let check=UnCheckedParam::get_typecheck_of_payload_parameter( value, expected_type );
+                UnCheckedParam { problem: check.1, name: name.to_string(), relation: CPRelation::Unknown, value: check.0, use_extended_syntax: false } 
+            },
+            None => {
+                if required{ UnCheckedParam::new_err_missing_parameter(name)}
+                else{panic!("Something wrong: there's an unrequired parameter without a value ... ?");}
+            }
+
+        }
+    }
+
+    // Used if there is a POST/PATCH request but no
+    // parameters configured in the API -> there 
+    // is no route.
+    pub fn new_err_no_route() -> Self{
+        UnCheckedParam { problem: "No such route".to_string(), name: S_EMPTY, relation: CPRelation::Unknown, 
+            value: ParamVal::Text(S_EMPTY), use_extended_syntax: false } 
+    }
+
+    pub fn new_err_missing_parameter( s_name: &str ) -> Self{
+        UnCheckedParam { problem: format!("parameter \"{}\" is obligatory according to api, but missing from the request", s_name), 
+            name: S_EMPTY, relation: CPRelation::Unknown, value: ParamVal::Text(S_EMPTY), use_extended_syntax: false } 
+    }
+
+    pub fn new_err_query_ext_param_with_unknown_relation( s_name: &str, s_value: &str ) -> Self{
+        UnCheckedParam { problem: format!("parameter \"{}\" is handed over as \"extended,\" but value \"{}\" does not contain a \
+            recognizable relation. (Extended parameter have values such as eq.7 for \"equals 7\")", s_name, s_value), 
+            name: S_EMPTY, relation: CPRelation::Unknown, value: ParamVal::Text(S_EMPTY), use_extended_syntax: true } 
+    }
+
+    // Parameter is in API, but not marked as required 
+    // and not in the request. In short, not a problem.
+    pub fn new_err_non_required_parameter_missing() -> Self{
+        UnCheckedParam { problem: API::SUPERFLUOUS_PARAMETER.to_string(), name: S_EMPTY, relation: CPRelation::Unknown, 
+            value: ParamVal::Text(S_EMPTY), use_extended_syntax: false } 
+    }
+
+    pub fn is_conform( &self ) -> bool{
+        self.problem.len()==0
+    }
+
+    fn get_typecheck_of_payload_parameter( value: &Value, expected_type: ParameterType ) -> (ParamVal, String){
+        match expected_type {
+            ParameterType::STRING => match value.as_str(){
+                // String OR Array OR Object are all converted to ParamVal(Text)
+                // in order to transfert them to Postgres
+                // @TODO: Arrays and Objects could probably be checked for 
+                //        conformity to API and handed to the DB as is
+                //        would be a nice asset!
+                Some( val ) => (ParamVal::Text(val.to_string()), S_EMPTY),
+                None => match value.is_array() || value.is_object(){
+                    true => (ParamVal::Text(value.to_string()), S_EMPTY),
+                    _ => (ParamVal::Text(S_EMPTY), S_EMPTY),
+                }
+            },
+            ParameterType::INTEGER => match value.is_i64(){
+                true => (ParamVal::Int( value.as_i64().unwrap().try_into().unwrap()), S_EMPTY ), // try_into for i64 -> i32. There is no i32 in serde::value
+                false => ( ParamVal::Text(S_EMPTY), format!("Not an integer value: `{}`", value))
+            }
+            ParameterType::BIGINT => match value.is_i64(){
+                true => (ParamVal::BigInt( value.as_i64().unwrap()), S_EMPTY),
+                false => (ParamVal::Text(S_EMPTY),format!("Not a bigint value: `{}`", value))
+            }
+            ParameterType::BOOLEAN => match value.is_boolean(){
+                true => (ParamVal::Boolean( value.as_bool().unwrap()), S_EMPTY ),
+                false => (ParamVal::Text(S_EMPTY),format!("Not a boolean value: `{}`", value))
+            }
+            ParameterType::NUMBER => match value.is_f64(){
+                true => (ParamVal::Float( value.as_f64().unwrap()), S_EMPTY),
+                false => (ParamVal::Text(S_EMPTY),format!("Not a float number: `{}`", value))
+            }
+            _ => (ParamVal::Text(S_EMPTY),format!("Unknown type expected, giving up."))
+
+        }
+    }
+//    pub fn get_type_as_configured( s_param_value: &str, s_param_type: &str ) -> Result<ParamVal, String>{
+    fn get_typecheck_of_query_parameter( value: &str, expected_type: ParameterType ) -> (ParamVal, String){
+        match expected_type {
+            ParameterType::STRING => (ParamVal::Text(value.to_string()), S_EMPTY),
+            ParameterType::INTEGER => match value.parse::<i32>().is_ok(){
+                true => (ParamVal::Int( value.parse::<i32>().unwrap()), S_EMPTY ),
+                false => ( ParamVal::Text(S_EMPTY), format!("Not an integer value: `{}`", value))
+            }
+            ParameterType::BIGINT => match value.parse::<i64>().is_ok(){
+                true => (ParamVal::BigInt( value.parse::<i64>().unwrap()), S_EMPTY),
+                false => (ParamVal::Text(S_EMPTY),format!("Not a bigint value: `{}`", value))
+            }
+            ParameterType::BOOLEAN => match value.parse::<bool>().is_ok(){
+                true => (ParamVal::Boolean( value.parse::<bool>().unwrap()), S_EMPTY ),
+                false => (ParamVal::Text(S_EMPTY),format!("Not a boolean value: `{}`", value))
+            }
+            ParameterType::NUMBER => match value.parse::<f64>().is_ok(){
+                true => (ParamVal::Float( value.parse::<f64>().unwrap()), S_EMPTY),
+                false => (ParamVal::Text(S_EMPTY),format!("Not a float number: `{}`", value))
+            }
+            _ => (ParamVal::Text(S_EMPTY),format!("Unknown type expected, giving up."))
+
+        }
+    }
 }
 
 // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -206,6 +389,7 @@ pub struct MuscleConfig{
     cert_pass: String,               // Pwd for server certificate (TLS/Https)
     cert_file: String,               // Certificate file (TLS/Https)
     api_conf: String,                // OpenAPI config file containing endpoints
+    static_files_folder: String, // Path to serve static files from
     token_name: String,              // Pg token name: @TODO
     token_secret: String,            // Pg shared token secret: @TODO
     pg_setvar_prefix: String,        // Pg prefix for variables that are set in postgres through the token: @TODO
@@ -277,7 +461,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>>{
     // it needs to be mutable. That's why it is put inside
     // an async-aware Mutex.
     let muscle_api = Arc::new(Mutex::new(
-        API::new( &muscle_config.addr, &muscle_config.token_name, &muscle_config.pg_setvar_prefix, &muscle_config.api_conf )));
+        API::new( &muscle_config.addr, 
+            &muscle_config.token_name, 
+            &muscle_config.pg_setvar_prefix, 
+            &muscle_config.api_conf,
+            muscle_config.use_eq_syntax_on_url_parameters
+        )));
 
     loop {
         // Asynchronously wait for an inbound socket.
@@ -289,7 +478,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>>{
 
         // Need the ip address for logging and to make sure
         // that shutdown requests are only executed if they
-        // come from 127.0.0.1. <- @HACK: server.addr
+        // come from 127.0.0.1. 
         let client_ip = remote_addr.ip().to_string();
 
         // Clone things for the spawned thread:
@@ -320,9 +509,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>>{
             //
             // This is why the .read() is called in a timeout of configurable ms-length
             //
-            // Today (April 21), I am not sure, if the 16 kB are specific to this 
+            // Today (April in 2021), I am not sure, if the 16 kB are specific to this 
             // machine? This is why it's also configurable.
-            // @TODO: Catch timeout-error!
             let mut n = chunksize;
             while n == chunksize{
                 let mut buffer = vec![0; chunksize];
@@ -342,9 +530,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>>{
                             }
                         }
             }
-            if n == 0 {
-                return;
-            }
+
+            if n == 0 { return; }
             
             // response is 
             //   .0: status + header,
@@ -352,7 +539,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>>{
             //   .2: flag for request for static content,
             let mut response = handle_connection(client_ip, 
                 s_request, &cloned_pool, 
-                &mut api.lock().await.borrow_mut(), &cloned_conf.token_secret).await;
+                &mut api.lock().await.borrow_mut(), &cloned_conf.token_secret,
+                &cloned_conf.static_files_folder).await;
 
             let s_status_and_header = response.0; 
             let v_response = &mut s_status_and_header.into_bytes();
@@ -390,8 +578,19 @@ async fn main() -> Result<(), Box<dyn std::error::Error>>{
 /// rejects the request if it does not conform to the API,
 /// or gets a response from tokio_postgrest as the API specifies.
 ///
-async fn handle_connection(s_client_ip: String, s_request: String, db_client: &Pool, mut api: &mut API, token_secret: &String) -> (String, Vec<u8>, bool){
-    let request = &mut Request::new( &s_request, &s_client_ip, &api.local_ip_address, &token_secret );
+async fn handle_connection(s_client_ip: String, 
+    s_request: String, 
+    db_client: &Pool, 
+    mut api: &mut API, 
+    token_secret: &String,
+    static_files: &String
+) -> (String, Vec<u8>, bool){
+    let request = &mut Request::new( &s_request, 
+        &s_client_ip,
+        &api.local_ip_address, 
+        &token_secret,
+        &static_files
+     );
     api.set_request( &request );
     Response::new( &mut api, db_client ).await.get_response()
 }
@@ -409,27 +608,27 @@ mod test_get_query{
 
     #[test]
     fn simple() {
-        let mut r:Request = Request::new( "/path/to/this?a=1&b=ä", "::1", "127.0.0.1", "" );
-        assert_eq!( r.get_query_param( "a" ),  Some("1") );
-        assert_eq!( r.get_query_param( "b" ),  Some("ä") );
-        assert_eq!( r.get_query_param( "c" ),  None );
+        let mut r:Request = Request::new( "/path/to/this?a=1&b=ä", "::1", "127.0.0.1", "", "static" );
+        assert_eq!( r.get_query_parameter_value( "a" ),  Some("1") );
+        assert_eq!( r.get_query_parameter_value( "b" ),  Some("ä") );
+        assert_eq!( r.get_query_parameter_value( "c" ),  None );
         assert_eq!( r.get_payload_param( "c" ),  None );
         assert_eq!( r.is_static(),  false );
     }
     #[test]
     fn simple1() {
-        let mut r:Request = Request::new( "path/to/this", "::1", "127.0.0.1", "" );
-        assert_eq!( r.get_query_param( "a"),  None );
-        assert_eq!( r.get_query_param( "c" ),  None );
+        let mut r:Request = Request::new( "path/to/this", "::1", "127.0.0.1", "", "static");
+        assert_eq!( r.get_query_parameter_value( "a"),  None );
+        assert_eq!( r.get_query_parameter_value( "c" ),  None );
         assert_eq!( r.get_payload_param( "c" ),  None );
         assert_eq!( r.is_static(),  false );
     }
 
     #[test]
     fn s_payload() {
-        let mut r:Request = Request::new( "path/to/this\n{\"this\":\"that\"}", "::1", "127.0.0.1", "" );
-        assert_eq!( r.get_query_param( "a"),  None );
-        assert_eq!( r.get_query_param( "c" ),  None );
+        let mut r:Request = Request::new( "path/to/this\n{\"this\":\"that\"}", "::1", "127.0.0.1", "" , "static");
+        assert_eq!( r.get_query_parameter_value( "a"),  None );
+        assert_eq!( r.get_query_parameter_value( "c" ),  None );
         assert_eq!( r.get_payload_param( "this" ).unwrap().as_str(),  Some("that") );
         assert_eq!( r.is_static(),  false );
 
@@ -437,7 +636,7 @@ mod test_get_query{
 
     #[test]
     fn get_static() {
-        let r:Request = Request::new( "/static/path/to/this\n{\"this\":\"that\"}", "::1", "127.0.0.1", "" );
+        let r:Request = Request::new( "/static/path/to/this\n{\"this\":\"that\"}", "::1", "127.0.0.1", "" , "static");
         assert_eq!( r.is_static(),  true );
     }
 
@@ -449,30 +648,30 @@ mod test_get_query{
 //    }
     #[test]
     fn get_auth() {
-        let r:Request = Request::new( "/static/path/to/this\n{\"this\":\"that\"}\nAuthorization: Bearer 1234&äß", "::1", "127.0.0.1", "" );
+        let r:Request = Request::new( "/static/path/to/this\n{\"this\":\"that\"}\nAuthorization: Bearer 1234&äß", "::1", "127.0.0.1", "" , "static");
         assert_eq!( r.get_auth(),  "1234&äß" );
 //        assert_eq!( r.has_token(),  true );
     }
 
     #[test]
     fn get_auth_problematic_short() {
-        let r:Request = Request::new( "/static/path/to/this\n{\"this\":\"that\"}\nAuthorization: Bearer", "::1", "127.0.0.1", "");
+        let r:Request = Request::new( "/static/path/to/this\n{\"this\":\"that\"}\nAuthorization: Bearer", "::1", "127.0.0.1", "", "static");
         assert_eq!( r.get_auth(),  "" );
 //        assert_eq!( r.has_token(),  false );
     }
 
     #[test]
     fn get_auth_problematic_long() {
-        let r:Request = Request::new( "/static/path/to/this\n{\"this\":\"that\"}\nAuthorization: Bearer 1234567890123456789012345678901234567890", "::1", "127.0.0.1", "" );
+        let r:Request = Request::new( "/static/path/to/this\n{\"this\":\"that\"}\nAuthorization: Bearer 1234567890123456789012345678901234567890", "::1", "127.0.0.1", "" , "static");
         assert_eq!( r.get_auth(),  "1234567890123456789012345678901234567890" );
 //        assert_eq!( r.has_token(),  true );
     }
 
     #[test]
     fn s_broken_payload() {
-        let mut r:Request = Request::new( "path/to/this\n{\"this\":\"that\"", "::1", "127.0.0.1", "" );
-        assert_eq!( r.get_query_param( "a"),  None );
-        assert_eq!( r.get_query_param( "c" ),  None );
+        let mut r:Request = Request::new( "path/to/this\n{\"this\":\"that\"", "::1", "127.0.0.1", "" , "static");
+        assert_eq!( r.get_query_parameter_value( "a"),  None );
+        assert_eq!( r.get_query_parameter_value( "c" ),  None );
         assert_eq!( r.get_payload_param( "this" ),  None );
         assert_eq!( r.is_static(),  false );
 
@@ -522,6 +721,9 @@ fn get_conf( s_file: &str ) -> MuscleConfig{
         api_conf: conf.get("Webservice", "api_conf").expect(
             &format!("{}{}", s_err, "`api_conf` in section `Webservice`")[..]),
 
+        static_files_folder: conf.get("Webservice", "static_files_folder").expect(
+            &format!("{}{}", s_err, "`static_files_folder` in section `Webservice`")[..]),
+
         token_name: conf.get("Authorization", "pg_token_name").expect(
             &format!("{}{}", s_err, "`pg_token_name` in section `Authorization`")[..]),
 
@@ -533,5 +735,62 @@ fn get_conf( s_file: &str ) -> MuscleConfig{
 
         use_eq_syntax_on_url_parameters: conf.get("Service", "api_use_eq_syntax_on_url_parameters").expect(
             &format!("{}{}", s_err, "`api_use_eq_syntax_on_url_parameters` in section `Service`")[..])
+    }
+}
+
+#[cfg(test)]
+mod test_query_parameters{
+    use super::*;
+
+    #[test]
+    fn simple() {
+        //let t=UnCheckedParam::new_query_parameter("test", String("b"), "", true);
+        let t=UnCheckedParam::new_query_parameter("test", "5", ParameterType::BIGINT);
+        assert_eq!(t.is_conform(), true);
+
+        let t=UnCheckedParam::new_query_parameter("test", "eq.5", ParameterType::BIGINT);
+        assert_eq!(t.is_conform(), false);
+
+        let t=UnCheckedParam::new_query_parameter_ext("test", "eq.8", ParameterType::BIGINT);
+        assert_eq!(t.is_conform(), true);
+
+        let t=UnCheckedParam::new_query_parameter_ext("test", "lt.8", ParameterType::BIGINT);
+        assert_eq!(t.is_conform(), true);
+
+        let t=UnCheckedParam::new_query_parameter_ext("test", "le.8", ParameterType::BIGINT);
+        assert_eq!(t.is_conform(), true);
+
+        let t=UnCheckedParam::new_query_parameter_ext("test", "gt.8", ParameterType::BIGINT);
+        assert_eq!(t.is_conform(), true);
+
+        let t=UnCheckedParam::new_query_parameter_ext("test", "ur.8", ParameterType::BIGINT);
+        assert_eq!(t.is_conform(), false);
+
+        let t=UnCheckedParam::new_query_parameter_ext("test", "eq.true", ParameterType::BOOLEAN);
+        assert_eq!(t.is_conform(), true);
+
+        let t=UnCheckedParam::new_query_parameter_ext("test", "eq.true2", ParameterType::BOOLEAN);
+        assert_eq!(t.is_conform(), false);
+
+        let t=UnCheckedParam::new_query_parameter_ext("test", "eq.Horst", ParameterType::STRING);
+        assert_eq!(t.is_conform(), true);
+
+        let t=UnCheckedParam::new_query_parameter_ext("test", "ne.Horst", ParameterType::STRING);
+        assert_eq!(t.is_conform(), true);
+
+        let t=UnCheckedParam::new_query_parameter_ext("test", "ne.7.889", ParameterType::NUMBER);
+        assert_eq!(t.is_conform(), true);
+
+        let t=UnCheckedParam::new_query_parameter_ext("test", "ne.7.8.89", ParameterType::NUMBER);
+        assert_eq!(t.is_conform(), false);
+
+        let t=UnCheckedParam::new_query_parameter_ext("test", "ne.7.889", ParameterType::BIGINT);
+        assert_eq!(t.is_conform(), false);
+
+        let t=UnCheckedParam::new_query_parameter_ext("test", "eqtrue2", ParameterType::BOOLEAN);
+        assert_eq!(t.is_conform(), false);
+
+        let t=UnCheckedParam::new_query_parameter_ext("test", "eq.a8", ParameterType::BIGINT);
+        assert_eq!(t.is_conform(), false);
     }
 }

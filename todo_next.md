@@ -1,3 +1,19 @@
+TOC Update: irgendwie ist der Parameter "toc" leer. Why? (2021-9-13)
+- Test für lt. etc. Überhaupt: größere Test-Suite mit Todo o.ä.
+  - db.get_parameter_where_criteria braucht Variable anstatt "="
+- Erlaube http (lokal) anstatt https. Oder sogar socket?
+- Überlegen: sollte PATCH auch eine x-query-syntax-of-method=GET haben und so als select function aufrufbar sein? Schadet eigentlich nicht, oder?
+- Überlegen: sollte use_extended_url-Syntax in der API pro Endpunkt konfigurierbar sein?
+- Überlegen: sollten auch Array und Object-Typen per API konfigurierbar sein? Und überprüfbar? Und weiterleitbar an die DB?
+- Ermöglichen eines Pfads für dynamische Anfragen (analog zu ./static).
+- Post-Parameter: maxlen (auch sf_test.js wieder aktivieren: Login-Name begrenzen auf 80 Zeichen)
+- Beispielprojekt für Tests entwickeln
+- Ermöglichen, dass überflüssige Parameter (Post-Parameter insbes.) zum ERR führen (in muscle.ini)
+- Configure Size limit for a request (denial of service)
+- Ponder Design question again: parse only those parts of the request that are part of the API specification? (Rather than 
+  analyse query string and payload and parse it all into parameters with names and values -- only parse what is part 
+  of the specification?)
+- do we need more than one static folder? And/or static folder alias and actual representation?
 - Wenn beim Start postgresql nicht angeschaltet ist, bleibt die Verbindung zur DB unmöglich
    - proof: systemctl stop postgresql
    - starte Debug
@@ -5,7 +21,6 @@
    - gewünscht: (1) reload sollte das beheben können? Oder "reconnect"?
    - (2) Bei dem speziellen Fehler (NoClientDbAvailable) sollte dann neu versucht werden, zu verbinden.
 - Testprojekt mit Datenbank aufstellen und Testclient implementieren (node? curl?)
-- allow for =eq. - Syntax
 - Pfad fk2 liefert einen Fehler aus der DB: wieso wir das durchgeleitet?
 - Parameter Control:
   - Testen: was passiert bei "x-query-syntax-of-method": "GET", also z.B. Rufe Fkt auf ohne Parameter?
@@ -25,3 +40,9 @@ OK - in main 147.142.232.252 konfigurierbar machen.
 OK  - in db.rs 179 schon umgesetzt, auch bei post, patch, delete, muss es möglich sein, 
 OK    ohne Parameter zu agieren.
 OK  - was passiert, wenn in openapi gar kein Parameter Array angegeben ist?
+OK Für statische Seiten im Moment hartkodiert /static/ -- das muss in muscle.ini konfigurierbar sein.
+OK - allow for =eq. - Syntax
+  -> Ziel: https://localhost:8443/static/sf/test.html soll wieder laufen
+  - api.check_query_parameters braucht Reaktion auf conf.use_eq_syntax_on_url_parameters:
+      - (1) Checked-Parameter braucht ein Feld für Relation (String, bzw. "=", "!=", "<", ">", "<=", ">=", "~=", "IN")
+      - (2) Falls use_eq_syntax_on_url_parameters=true muss die Relation beim Check gesetzt werden

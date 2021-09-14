@@ -16,23 +16,6 @@
     }
   ],
   "paths": {
-    "kapitel": {
-      "get": {
-        "operationId": "web_api.kapitel",
-        "parameters": [
-          {
-            "name": "kapitel_id",
-            "description": "Id des Kapitels",
-            "required": true,
-            "in": "query",
-            "schema": {
-              "type": "integer",
-              "format": "integer"
-            }
-          }
-        ]
-      }
-    },
     "toc": {
       "get": {
         "operationId": "web_api.toc",
@@ -48,7 +31,156 @@
             }
           }
         ]
+      },
+      "patch": {
+        "operationId": "web_api.buch_put_toc",
+        "x-query-syntax-of-method": "GET",
+        "x-auth-method": "forward_jwt_bearer",
+        "parameters": [],
+        "requestBody": {
+          "description": "toc",
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/toc"
+              }
+            }
+          },
+          "required": true
+        }
+      }
+    },
+    "kapitel": {
+      "get": {
+        "operationId": "web_api.kapitel",
+        "parameters": [
+          {
+            "name": "kapitel_id",
+            "description": "Id des Kapitels",
+            "required": true,
+            "in": "query",
+            "schema": {
+              "type": "integer",
+              "format": "integer"
+            }
+          }
+        ]
+      },
+      "patch": {
+        "operationId": "web_api.kapitel",
+        "x-auth-method": "forward_jwt_bearer",
+        "parameters": [
+          {
+            "name": "kapitel_id",
+            "description": "Id des Kapitels",
+            "required": true,
+            "in": "query",
+            "schema": {
+              "type": "integer",
+              "format": "integer"
+            }
+          },
+          {
+            "name": "revision_id",
+            "description": "Revision des Kapitels",
+            "required": true,
+            "in": "query",
+            "schema": {
+              "type": "integer",
+              "format": "integer"
+            }
+          }
+        ],
+        "requestBody": {
+          "description": "kapitel",
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/kapitel"
+              }
+            }
+          },
+          "required": true
+        }
+      }
+    },
+    "login": {
+      "post": {
+        "operationId": "web_api.login",
+        "x-query-syntax-of-method": "GET",
+        "requestBody": {
+          "description": "fragekontext",
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/logindaten"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "description": "Created",
+            "content": {}
+          }
+        }
+      }
+    }
+  },
+    "components": {
+      "schemas": {
+        "logindaten": {
+          "type": "object",
+          "required": [
+            "login_name",
+            "pass"
+          ],
+          "properties": {
+            "login_name": {
+              "type": "string",
+              "format": "text"
+            },
+            "pass": {
+              "type": "string",
+              "format": "text"
+            }
+          }
+        },
+        "toc": {
+          "type": "object",
+          "required": [
+            "buch_id",
+            "toc"
+          ],
+          "properties": {
+            "buch_id": {
+              "type": "integer",
+              "format": "integer"
+            },
+            "toc": {
+              "type": "string",
+              "format": "text"
+            }
+          }
+        },
+        "kapitel": {
+          "type": "object",
+          "required": [
+            "body",
+            "heading"
+          ],
+          "properties": {
+            "body": {
+              "type": "string",
+              "format": "text"
+            },
+            "heading": {
+              "type": "string",
+              "format": "text"
+            }
+          }
+        }
       }
     }
   }
-}

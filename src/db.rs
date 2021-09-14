@@ -133,14 +133,26 @@ async fn query_db(
 // Build SQL String for a patch request -> update ...
 fn get_db_patch_sql( api: &mut API ) -> String{
         let query = &api.get_operations_id();    // The query
-        match api.get_checked_query_params().len(){
-            0 => format!("update {} set {} returning row_to_json({}.*)::text;", query, 
-                    get_parameter_assignment_csv( &api.get_checked_post_params( ) ), query),
-            _ => format!("update {} set {} where ({}) returning row_to_json({}.*)::text;", 
-                    query, 
-                    get_parameter_assignment_csv( &api.get_checked_post_params( ) ), 
-                    get_parameter_where_criteria( api ), 
-                    query)
+       // "Reroute" is a special functionality for POST or PATCH
+       // requests that need GET-treatment:
+       // OpenAPI has the attribute "x-query-syntax-of-method": "GET",
+       // e.g. if a stored proc is called, we 
+       // want 'select' rather than 'insert into' or 'update'.
+       match api.request.method_reroute {
+           RequestMethod::POSTasGET => {
+               format!("select json_agg(t)::text from (select * from {} ({})) t;", 
+                   query, 
+                   get_sql_named_notation_from_params( &api.get_checked_post_params( ) ))
+           },
+           _ => match api.get_checked_query_params().len(){
+                0 => format!("update {} set {} returning row_to_json({}.*)::text;", query, 
+                        get_parameter_assignment_csv( &api.get_checked_post_params( ) ), query),
+                _ => format!("update {} set {} where ({}) returning row_to_json({}.*)::text;", 
+                        query, 
+                        get_parameter_assignment_csv( &api.get_checked_post_params( ) ), 
+                        get_parameter_where_criteria( api ), 
+                        query)
+           }
         }
 }
 
@@ -153,11 +165,11 @@ fn get_db_post_sql( api: &mut API ) -> String{
 
        let query = &api.get_operations_id(  );    // The query
 
-       // "Reroute" is a special functionality for POST 
+       // "Reroute" is a special functionality for POST or PATCH
        // requests that need GET-treatment:
        // OpenAPI has the attribute "x-query-syntax-of-method": "GET",
        // e.g. if a stored proc is called, we 
-       // want 'select' rather than 'insert into'.
+       // want 'select' rather than 'insert into' or 'update'.
        match api.request.method_reroute {
            RequestMethod::POSTasGET => {
                format!("select json_agg(t)::text from (select * from {} ({})) t;", 
@@ -270,9 +282,10 @@ fn get_parameter_where_criteria( api: &mut API ) -> String{
         }
     }; 
 
+    // @TODO: CheckedParameters need a CPRelation. 
     api.get_checked_query_params().into_iter().map( |y| { 
         ii+=1;
-        format!("and \"{}\"=${} ", &y.name, ii)}  ).collect::<String>().chars().skip(4).collect()
+        format!("and \"{}\"{}${} ", &y.name, &y.relation, ii)}  ).collect::<String>().chars().skip(4).collect()
 }
 
 /// Helper SQL for `insert into ...` statements
@@ -304,6 +317,7 @@ fn get_parameter_placeholder_csv( parms: &Vec<CheckedParam>, start_arg: Option<u
  * @todo: leere Antwort gibt "{}" zurück -- konfigurierbar, ob JSON Antwort oder Txt?
  **/
 async fn get_first_row(client: &mut Client, s_sql: &str, prep_vals_opt: Option<&Vec::<&ParamVal>>) ->Result<String, tokio_postgres::Error>{ 
+
 
     let row = match client.query_opt( s_sql, &get_pg_parameter_vector( prep_vals_opt )).await{
        Ok ( row ) => row,
@@ -371,7 +385,7 @@ fn get_pg_parameter_vector<'a>( raw_values: Option<&Vec::<&'a ParamVal>> ) -> Ve
 
 fn get_to_sql_from_param_val( par: &ParamVal ) -> &(dyn ToSql + Sync){
     match par{
-        ParamVal::Text(e) => e as &(dyn ToSql + Sync),
+        ParamVal::Text(e) => {info!("Wert ist >{}<", e);e as &(dyn ToSql + Sync)},
         ParamVal::Int(e) => e as &(dyn ToSql + Sync),
         ParamVal::BigInt(e) => e as &(dyn ToSql + Sync),
         ParamVal::Float(e) => e as &(dyn ToSql + Sync),
@@ -398,26 +412,16 @@ mod test_get_named_notation{
 
     #[test]
     fn simple() {
-        let tt = vec![CheckedParam{
-            name: "y".to_string(), 
-            value: ParamVal::Text("z".to_string())}, 
-
-            CheckedParam{
-                name: "b".to_string(), 
-                value: ParamVal::Text("c".to_string())}];
+        let tt = vec![CheckedParam::new( "y".to_string(), ParamVal::Text("z".to_string())),
+        CheckedParam::new( "b".to_string(), ParamVal::Text("c".to_string()))];
 
         assert_eq!( get_sql_named_notation_from_params( &tt ), "\"y\"=>$1,\"b\"=>$2");
     }
 
     #[test]
     fn utf() {
-        let tt = vec![CheckedParam{
-            name: "Hänßgen".to_string(), 
-            value: ParamVal::Text("Ä".to_string())}, 
-
-            CheckedParam{
-                name: "Vröß".to_string(), 
-                value: ParamVal::Text("c".to_string())}];
+        let tt = vec![CheckedParam::new( "Hänßgen".to_string(), ParamVal::Text("Ä".to_string())),
+        CheckedParam::new( "Vröß".to_string(), ParamVal::Text("c".to_string()))];
         assert_eq!( get_sql_named_notation_from_params( &tt ), "\"Hänßgen\"=>$1,\"Vröß\"=>$2");
     }
 
@@ -434,26 +438,16 @@ mod test_get_sql_insert{
 
     #[test]
     fn simple() {
-        let tt = vec![CheckedParam{
-            name: "y".to_string(), 
-            value: ParamVal::Text("z".to_string())}, 
-
-            CheckedParam{
-                name: "b".to_string(), 
-                value: ParamVal::Text("c".to_string())}];
+        let tt = vec![CheckedParam::new( "y".to_string(), ParamVal::Text("z".to_string())),
+        CheckedParam::new( "b".to_string(), ParamVal::Text("c".to_string()))];
 
         assert_eq!( get_parameter_names_csv( &tt ), "\"y\",\"b\"");
     }
 
     #[test]
     fn utf() {
-        let tt = vec![CheckedParam{
-            name: "Hänßgen".to_string(), 
-            value: ParamVal::Text("Ä".to_string())}, 
-
-            CheckedParam{
-                name: "Vröß".to_string(), 
-                value: ParamVal::Text("c".to_string())}];
+        let tt = vec![CheckedParam::new( "Hänßgen".to_string(), ParamVal::Text("Ä".to_string())),
+        CheckedParam::new( "Vröß".to_string(), ParamVal::Text("c".to_string()))];
         assert_eq!( get_parameter_names_csv( &tt ), "\"Hänßgen\",\"Vröß\"");
     }
 
@@ -470,26 +464,15 @@ mod test_get_sql_update_parameters{
 
     #[test]
     fn simple() {
-        let tt = vec![CheckedParam{
-            name: "y".to_string(), 
-            value: ParamVal::Text("z".to_string())}, 
-
-            CheckedParam{
-                name: "b".to_string(), 
-                value: ParamVal::Text("c".to_string())}];
-
+        let tt = vec![CheckedParam::new( "y".to_string(), ParamVal::Text("z".to_string())),
+        CheckedParam::new( "b".to_string(), ParamVal::Text("c".to_string()))];
         assert_eq!( get_parameter_assignment_csv( &tt ), "\"y\"=$1,\"b\"=$2");
     }
 
     #[test]
     fn utf() {
-        let tt = vec![CheckedParam{
-            name: "Hänßgen".to_string(), 
-            value: ParamVal::Text("Ä".to_string())}, 
-
-            CheckedParam{
-                name: "Vröß".to_string(), 
-                value: ParamVal::Text("c".to_string())}];
+        let tt = vec![CheckedParam::new( "Hänßgen".to_string(), ParamVal::Text("Ä".to_string())),
+        CheckedParam::new( "Vröß".to_string(), ParamVal::Text("c".to_string()))];
         assert_eq!( get_parameter_assignment_csv( &tt ), "\"Hänßgen\"=$1,\"Vröß\"=$2");
     }
 
@@ -506,27 +489,16 @@ mod test_get_sql_get_parameter_placeholder_csv{
 
     #[test]
     fn simple() {
-        let tt = vec![CheckedParam{
-            name: "y".to_string(), 
-            value: ParamVal::Text("z".to_string())}, 
-
-            CheckedParam{
-                name: "b".to_string(), 
-                value: ParamVal::Text("c".to_string())}];
-
+        let tt = vec![CheckedParam::new( "y".to_string(), ParamVal::Text("z".to_string())),
+        CheckedParam::new( "b".to_string(), ParamVal::Text("c".to_string()))];
         assert_eq!( get_parameter_placeholder_csv( &tt, None  ), "$1,$2");
         assert_eq!( get_parameter_placeholder_csv( &tt, Some( 7 )  ), "$8,$9");
     }
 
     #[test]
     fn utf() {
-        let tt = vec![CheckedParam{
-            name: "Hänßgen".to_string(), 
-            value: ParamVal::Text("Ä".to_string())}, 
-
-            CheckedParam{
-                name: "Vröß".to_string(), 
-                value: ParamVal::Text("c".to_string())}];
+        let tt = vec![CheckedParam::new( "Hänßgen".to_string(), ParamVal::Text("Ä".to_string())),
+        CheckedParam::new( "Vröß".to_string(), ParamVal::Text("c".to_string()))];
         assert_eq!( get_parameter_placeholder_csv( &tt, None ), "$1,$2");
         assert_eq!( get_parameter_placeholder_csv( &tt, Some( 7 )  ), "$8,$9");
     }

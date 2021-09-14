@@ -17,6 +17,7 @@ pub struct Request {
     pub auth_claim: Option<Value>,
     pub api_needs_auth: Authentication,
     pub token_secret: String,
+    pub static_folder: String,
     pub method: RequestMethod,
     pub method_reroute: RequestMethod,  // Do I need this? @TODO ... For POST to SQL procedures that need GET syntax from the response
     pub ip_address: String,
@@ -29,14 +30,12 @@ impl Request{
 
     /* Constructor */
 
-    // TODO
-    // - Beim ersten Aufruf statisches Feld query_p_vector setzen (performance)
-    // - vllt. ähnlich den Payload nur auf Anfrage auswerten
-    // - wenn die Methoden .get_query_param und .get_payload_param stehen, guard umschreiben
-    //
-
     /// Constructor for a Request struct that facilitates access
     /// to both query parameters and a json payload
+    ///
+    /// Parameters are *not* represented through (Un)CheckedParameter
+    /// structs, because these need an *expected type* to do their
+    /// job, which is not part of the request (but of the API)
     ///
     /// # Arguments
     ///
@@ -77,7 +76,7 @@ impl Request{
     ///   ...
     /// }
     /// ```
-    pub fn new( s_req: &str, s_ip_addr_client: &str, s_local_ip: &str, token_secret: &str ) -> Self {
+    pub fn new( s_req: &str, s_ip_addr_client: &str, s_local_ip: &str, token_secret: &str, static_folder: &str ) -> Self {
 
         // -----------------------------------------------------
         // Stream starts e.g. with "GET /path/to/foo?whater=1
@@ -87,11 +86,12 @@ impl Request{
         let url_plus_par: (&str, &str) = Request::get_url_plus_parms( &s_uri );
         let ct_payload_auth: (&str, &str, &str) = Request::get_content_payload_auth( &s_req );
 
-        let b_shut = Request::get_method( &s_first_line ) == RequestMethod::SHUTDOWN && s_ip_addr_client.eq( s_local_ip );
-        let b_reload = Request::get_method( &s_first_line ) == RequestMethod::RELOAD && s_ip_addr_client.eq( s_local_ip );
-        info!("Reload request? {}", b_reload);
+        let b_is_request_for_shutdown = Request::get_method( &s_first_line ) == RequestMethod::SHUTDOWN && s_ip_addr_client.eq( s_local_ip );
+        let b_is_request_for_api_reload = Request::get_method( &s_first_line ) == RequestMethod::RELOAD && s_ip_addr_client.eq( s_local_ip );
+        info!("Reload request? {}", b_is_request_for_api_reload);
         
         let claims = Request::get_auth_claims( ct_payload_auth.2.to_string(), token_secret.to_string() );
+
         Self{
             payload_is_read: false,
             query_is_read: false,
@@ -104,16 +104,17 @@ impl Request{
             content_type: ct_payload_auth.0.to_string(),
             authorization: ct_payload_auth.2.to_string(),
             auth_claim: claims,
-            is_shutdown: b_shut,
-            is_reload_config: b_reload,
+            is_shutdown: b_is_request_for_shutdown,
+            is_reload_config: b_is_request_for_api_reload,
             api_needs_auth: Authentication::UNKNOWN,
             token_secret: token_secret.to_string(),
+            static_folder: static_folder.to_string(),
             ip_address: s_ip_addr_client.to_string(),
             payload: Value::Null
         }
     }
 
-    /// This request's query parameters as Vector<(Name, Value)>
+    /// This request's query parameters as Vector<(Name, String)>
     fn get_query_params_as_vector( &mut self ) -> &Vec<(String, String)> {
         if !self.query_is_read {
             self.query_params = serde_urlencoded::from_str::<Vec<(String, String)>>( &self.q_parms ).unwrap();
@@ -140,10 +141,10 @@ impl Request{
     ///
     /// ```
     /// // Assuming ./page?this=foo&that=bar was called
-    /// assert_eq( request.get_query_param( "this", "foo" );
-    /// assert_eq( request.get_query_param( "that", "bar" );
+    /// assert_eq( request.get_query_param( "this" ), "foo" );
+    /// assert_eq( request.get_query_param( "that" ), "bar" );
     /// ```
-    pub fn get_query_param( &mut self, s_name: &str ) -> Option<&str>{
+    pub fn get_query_parameter_value( &mut self, s_name: &str ) -> Option<&str>{
         match self.get_query_params_as_vector().into_iter().find( | &p | { p.0 == s_name } ){
             Some( x ) => Some( &x.1 ),
             None => None
@@ -157,7 +158,7 @@ impl Request{
 
     /// Is this a request for a static page?
     pub fn is_static( &self ) -> bool {
-        self.url.starts_with("static/")
+        self.url.starts_with( &self.static_folder )
     }
     
     /// Authentication Token
@@ -209,26 +210,6 @@ impl Request{
             }
         }
     }
-
-    /// Static method: extract method from HTTP String
-//    fn get_method( s_line: &str )-> u8 {
-//        let s = s_line.split("/").collect::<Vec<&str>>()[0];
-//
-//        if s_line.to_lowercase().starts_with("delete /pg_api_muscle:knockout") { 
-//            return Request::METHOD_SHUTDOWN_REQUEST; 
-//        }
-//
-//        match &s.to_lowercase().trim()[..]{
-//            "get" => Request::METHOD_GET,
-//            "post" => Request::METHOD_POST,
-//            "patch" => Request::METHOD_PATCH,
-//            "delete" => Request::METHOD_DELETE,
-//            x => {
-//                error!("HEADS UP: request with unknown HTTP-method: '{}'", x);
-//                Request::METHOD_UNKNOWN
-//            }
-//        }
-//    }
 
     /// Static method: extract uri (including parameters) from HTTP request
     fn get_uri( s_first_line: &str ) -> String{
@@ -300,17 +281,6 @@ impl Request{
             _ => "unknown"
         }
     }
-
-//    pub fn get_method_as_str( method: u8 ) -> &'static str{
-//        match method{
-//            Request::METHOD_GET => "get",
-//            Request::METHOD_POST => "post",
-//            Request::METHOD_POST_RESET_TO_GET => "post->get",
-//            Request::METHOD_PATCH => "patch",
-//            Request::METHOD_DELETE => "delete",
-//            _ => "unknown" 
-//        }
-//    }
 
 }
 #[cfg(test)]
