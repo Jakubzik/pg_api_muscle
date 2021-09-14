@@ -139,7 +139,7 @@ fn get_db_patch_sql( api: &mut API ) -> String{
        // e.g. if a stored proc is called, we 
        // want 'select' rather than 'insert into' or 'update'.
        match api.request.method_reroute {
-           RequestMethod::POSTasGET => {
+           RequestMethod::POSTorPATCHasGET => {
                format!("select json_agg(t)::text from (select * from {} ({})) t;", 
                    query, 
                    get_sql_named_notation_from_params( &api.get_checked_post_params( ) ))
@@ -171,7 +171,7 @@ fn get_db_post_sql( api: &mut API ) -> String{
        // e.g. if a stored proc is called, we 
        // want 'select' rather than 'insert into' or 'update'.
        match api.request.method_reroute {
-           RequestMethod::POSTasGET => {
+           RequestMethod::POSTorPATCHasGET => {
                format!("select json_agg(t)::text from (select * from {} ({})) t;", 
                    query, 
                    get_sql_named_notation_from_params( &api.get_checked_post_params( ) ))
@@ -242,7 +242,7 @@ fn get_sql_named_notation_from_params( request: &Vec<CheckedParam>  ) -> String{
         format!(",\"{}\"=>${}", &y.name, ii)} ).collect::<String>().chars().skip(1).collect()
 }
 
-/// Helper SQL for `update ... where` statements
+/// Helper SQL for `a=x,b=y,c=z` etc. as in `update ... set a=x,b=y,c=z... ... where` statements
 ///
 /// Extracts comma separated list of SQL assignments.
 ///

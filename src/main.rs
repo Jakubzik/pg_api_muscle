@@ -32,7 +32,7 @@ pub enum RequestMethod{
     POST,
     PATCH,
     DELETE,
-    POSTasGET,
+    POSTorPATCHasGET,
     SHUTDOWN,
     RELOAD,
     UNKNOWN
@@ -71,7 +71,7 @@ impl Display for RequestMethod {
             RequestMethod::POST => write!(f, "Http POST"),
             RequestMethod::PATCH => write!(f, "Http PATCH"),
             RequestMethod::DELETE => write!(f, "Http DELETE"),
-            RequestMethod::POSTasGET => write!(f, "Http POST -> GET"),
+            RequestMethod::POSTorPATCHasGET => write!(f, "Http POST -> GET"),
             RequestMethod::SHUTDOWN => write!(f, "SHUTDOWN"),
             _ => write!(f, "Unknown")
         }
@@ -141,19 +141,6 @@ pub enum CPRelation{
 }
 
 impl CPRelation{
-    fn db_representation(&mut self) -> String{
-        match self {
-            CPRelation::Unknown => "".to_string(),
-            CPRelation::Equal => "=".to_string(),
-            CPRelation::NotEqual => "!=".to_string(),
-            CPRelation::LessThan=> "<".to_string(),
-            CPRelation::GreaterThan => ">".to_string(),
-            CPRelation::LessOrEqual=> "<=".to_string(),
-            CPRelation::GreaterOrEqual=> ">=".to_string(),
-            CPRelation::Like => " LIKE ".to_string(),
-            CPRelation::In => " IN ".to_string()
-        }
-    }
     fn db_rep( rel: &CPRelation ) -> String{
         match rel {
             CPRelation::Unknown => "".to_string(),
@@ -553,9 +540,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>>{
             // a reading error (Lesefehler)
             // anyway -- here it goes. response.2 is boolean for a request to 
             // a static resource
-            if response.2 {&v_response.push(b'\n');}
+            if response.2 {v_response.push(b'\n');}
 
-            &v_response.append( &mut response.1 );
+            v_response.append( &mut response.1 );
 
             tls_stream
                 .write_all( &v_response )

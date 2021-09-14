@@ -11,9 +11,6 @@ use crate::APIParam;
 use crate::Schema;
 
 use std::{fs::File, io::BufReader};
-//use std::{
-//    convert::TryInto
-//};
 use log::{debug, error, info};
 
 //#[json]
@@ -110,7 +107,7 @@ impl API{
         }
     }
 
-    /// If POST is used but SELECT syntax needed for db query
+    /// If POST or PATCH is used but SELECT syntax needed for db query
     /// (e.g. in login, where the credentials are sent 
     /// through payload in a post request, but a 
     /// stored prodecure called using `SELECT`),
@@ -126,7 +123,7 @@ impl API{
                 [ Request::get_method_as_str(self.request.method) ]
                 [ "x-query-syntax-of-method" ].as_str().unwrap_or("") == "GET" {
                 info!("--> POST request re-routed to GET syntax");
-                self.request.method_reroute = RequestMethod::POSTasGET;
+                self.request.method_reroute = RequestMethod::POSTorPATCHasGET;
             }
         }
     }
@@ -134,6 +131,11 @@ impl API{
     // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
     // Important public methods
     ///
+    /// API is not re-initialized and remains static
+    /// in "main," since it does not change. In order 
+    /// to check a new request against this API,
+    /// thie method resets all request related states.
+    /// 
     /// Initialise a request for this API
     pub fn set_request( &mut self, request: &Request ){
         self.reset_request();
@@ -287,7 +289,7 @@ impl API{
             },
             RequestMethod::PATCH => {
                 self.get_checked_query_params();
-                &self.get_checked_post_params();
+                self.get_checked_post_params();
                 if self.problems_query_parameters == "No such route" {
                      "No such route".to_string()  // otherwise "No such route" is returned twice
                 }else{
@@ -297,7 +299,7 @@ impl API{
                 }
             },
             RequestMethod::POST => {
-                &self.get_checked_post_params();
+                self.get_checked_post_params();
                 self.problems_post_parameters.to_owned()
             }
             _ => { "This request method is not implemented; please use PATCH, POST, GET, or DELETE".to_string() }
@@ -641,193 +643,18 @@ impl API{
                     UnCheckedParam::new_query_parameter( s_param_name, value, ParameterType::from(s_param_type))
                 }
             }
-//            // ... if there *is* a value, check its type: ...
-//            Some ( value ) => match API::get_type_as_configured( &value.to_string(), s_param_type ){
-//
-//                // if the type conforms to the api, hand back no problms
-//                Ok( val ) => UnCheckedParam::new( 
-//                    s_param_name.to_string(), 
-//                    val,
-//                    S_EMPTY),
-//
-//                    // ... if type is wrong, return (ERR, EMPTY, value)
-//                _ => UnCheckedParam::new(
-//                        S_EMPTY, 
-//                        ParamVal::Text(S_EMPTY),
-//                        format!("parameter \"{}\" is expected to be of \
-//                             type \"{}\", but its value \"{}\" is \
-//                             not.", s_param_name, s_param_type, &value.to_string())
-//                    )
-//            },
-//
 //            // ... if there *is no* value handed over, return (ERR, EMPTY, EMPTY)
             None => {
                 if *b_param_required {
-                    return UnCheckedParam::new_err_missing_parameter(s_param_name);
-//                            S_EMPTY, 
-//                            ParamVal::Text(S_EMPTY),
-//                            format!("parameter \"{}\" is obligatory according to api \
-//                                            but missing from the request", s_param_name)
+                    UnCheckedParam::new_err_missing_parameter(s_param_name)
 //                    );
                 }else{
-                    return UnCheckedParam::new_err_non_required_parameter_missing();
-//                    return UnCheckedParam::new(
-//                        S_EMPTY, 
-//                        ParamVal::Text(S_EMPTY),
-//                        API::SUPERFLUOUS_PARAMETER.to_string());
+                    UnCheckedParam::new_err_non_required_parameter_missing()
                 }
 
             }
         }
     }
-
-    // @TODO type of Date, type of JSON?
- //   fn get_type_as_configured( s_param_value: &str, s_param_type: &str ) -> Result<ParamVal, String>{
- //       match s_param_type {
- //           API::TYPE_STRING => Ok( ParamVal::Text( s_param_value.to_string() )),
- //           API::TYPE_INTEGER => match s_param_value.parse::<i32>().is_ok(){
- //               true => Ok( ParamVal::Int( s_param_value.parse::<i32>().unwrap()) ),
- //               false => Err(format!("Not an integer value: `{}`", s_param_value))
- //           }
- //           API::TYPE_BIGINT => match s_param_value.parse::<i64>().is_ok(){
- //               true => Ok( ParamVal::BigInt( s_param_value.parse::<i64>().unwrap()) ),
- //               false => Err(format!("Not a bigint value: `{}`", s_param_value))
- //           }
- //           API::TYPE_BOOLEAN => match s_param_value.parse::<bool>().is_ok(){
- //               true => Ok( ParamVal::Boolean( s_param_value.parse::<bool>().unwrap()) ),
- //               false => Err(format!("Not a boolean value: `{}`", s_param_value))
- //           }
- //           API::TYPE_NUMBER => match s_param_value.parse::<f64>().is_ok(){
- //               true => Ok( ParamVal::Float( s_param_value.parse::<f64>().unwrap()) ),
- //               false => Err(format!("Not a float number: `{}`", s_param_value))
- //           }
- //           _ => Err(format!("Not a known type: `{}`", s_param_type))
- //       }
- //   }
-
-//    fn typetest_i64( val: &Value, s_param_name: &str ) -> UnCheckedParam{
-//        match val.is_i64(){
-//            true => UnCheckedParam::new_query_parameter( s_param_name, 
-//                ParamVal::Int(val.as_i64().unwrap().try_into().unwrap()),S_EMPTY),
-//
-//            _ => UnCheckedParam::new_query_parameter( S_EMPTY, ParamVal::Text(S_EMPTY), format!("parameter \"{}\" is expected to be of type \"integer\", but its value \"{}\" is \
-//                not.", s_param_name, val))
-//        }
-//    }
-//
-//    fn typetest_bool( val: &Value, s_param_name: &str ) -> UnCheckedParam{
-//        match val.is_boolean() {
-//            true => UnCheckedParam::new_query_parameter( s_param_name.to_string(), ParamVal::Boolean(val.as_bool().unwrap()), S_EMPTY),
-//
-//            _ => UnCheckedParam::new_query_parameter( S_EMPTY, ParamVal::Text(S_EMPTY), format!("parameter \"{}\" is expected to be of \
-//                    type \"boolean\", but its value \"{}\" is \
-//                    not.", s_param_name, val))
-//        }
-//    }
-//
-//    fn typetest_number( val: &Value, s_param_name: &str ) -> UnCheckedParam{
-//        match val.is_f64() {
-//            true => UnCheckedParam::new_query_parameter( s_param_name.to_string(), ParamVal::Float(val.as_f64().unwrap()), S_EMPTY),
-//
-//            _ => UnCheckedParam::new_query_parameter(S_EMPTY, ParamVal::Text(S_EMPTY), format!("parameter \"{}\" is expected to be of \
-//                            type \"number\", but its value \"{}\" is \
-//                            not.", s_param_name, val))
-//        }
-//    }
-//
-    // new 2021-6
-//    fn typetest_json( val: &Value, s_param_name: &str ) -> UnCheckedParam{
-//        match val.is_() {
-//            true => UnCheckedParam{ problem: S_EMPTY, name: s_param_name.to_string(), 
-//                value: ParamVal::Float(val.as_f64().unwrap())},
-//
-//            _ => UnCheckedParam{
-//                problem: format!("parameter \"{}\" is expected to be of \
-//                            type \"number\", but its value \"{}\" is \
-//                            not.", s_param_name, val), name: S_EMPTY, value: ParamVal::Text(S_EMPTY)}
-//        }
-//    }
-
-//    // @TODO really? I don't get this. Why not s = val.as_string()?
-//    fn typetest_string( val: &Value, s_param_name: &str ) -> UnCheckedParam{
-//        let s = match val.as_str(){
-//            Some( e ) => e.to_string(),
-//            _ => val.to_string()
-//        };
-//        UnCheckedParam::new_query_parameter( s_param_name.to_string(), ParamVal::Text( s ), S_EMPTY )
-//    }
-//
-    // @TODO typechecking seems full of redundancy in a go-through 
-    // and probably needs patient analysis
-//    fn report_missing_parameter( s_param_name: &str, s_param_type: &str, b_required: bool ) -> UnCheckedParam{
-//        if b_required {
-//            UnCheckedParam::new_query_parameter(S_EMPTY, ParamVal::Text(S_EMPTY), format!("parameter \"{}\" is expected to be of \
-//                            type \"{}\", but it seems missing", s_param_name, s_param_type))
-//        }else{
-//            UnCheckedParam::new_query_parameter( S_EMPTY, ParamVal::Text(S_EMPTY), API::SUPERFLUOUS_PARAMETER.to_string())
-//        }
-//    }
-//
-//    // Unwraps the value, reports a "missing parameter" if this fails,
-//    // and type-checks the value otherwise.
-//    fn report_missing_or_typecheck( s_param_name: &str, b_param_required: &bool, 
-//        s_param_value: Option<&Value>, s_param_type: &str, 
-//        typetest: &dyn Fn( &Value, &str ) -> UnCheckedParam) -> UnCheckedParam{
-//
-//        match s_param_value{
-//            Some( p_val ) => typetest( p_val, s_param_name ),
-//            _ => {
-//                info!("Missing `{:?}`, `{}` ??", s_param_value, s_param_name);
-//                API::report_missing_parameter( s_param_name, s_param_type, *b_param_required )
-//            }
-//        }
-//    }
-//
-    /// Problems of type-safety in the request (vs. the expected type) 
-    /// are stored in an `UnCheckedParam` which is later split into 
-    /// serious problems and `CheckedParams.`
-    /// 
-    /// DEPRECATED
-    /// 
-    /// The result:
-    /// problem: [ description | empty ]
-    /// name: [ name ]
-    /// value: [ value ]
- //   fn collect_payload_typecast_problems( s_param_name: &str, b_param_required: &bool, 
- //       s_param_value: Option<&Value>, s_param_type: &str ) -> UnCheckedParam{
-
- //       match s_param_type{
-
- //           // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
- //           // integer
- //           "integer" => API::report_missing_or_typecheck( s_param_name, b_param_required, 
- //                               s_param_value, s_param_type, &API::typetest_i64 ),
-
- //           // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
- //           // bigint
- //           "bigint" => API::report_missing_or_typecheck( s_param_name, b_param_required, 
- //                               s_param_value, s_param_type, &API::typetest_i64 ),
-
- //           // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
- //           // string
- //           "string" => API::report_missing_or_typecheck( s_param_name, b_param_required, 
- //                               s_param_value, s_param_type, &API::typetest_string ),
-
- //           // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
- //           // boolean
- //           "boolean" => API::report_missing_or_typecheck( s_param_name, b_param_required, 
- //                               s_param_value, s_param_type, &API::typetest_bool ),
-
- //           // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
- //           // float
- //           "number" =>  API::report_missing_or_typecheck( s_param_name, b_param_required, 
- //                               s_param_value, s_param_type, &API::typetest_number ),
-
- //           _ => { UnCheckedParam::new_query_parameter(S_EMPTY, ParamVal::Text(S_EMPTY), format!("parameter \"{}\" is expected to be of \
- //                        type \"{}\", but this type is not implemented in this library.", s_param_name, s_param_type))
- //           }
- //       }
- //   }
 
     /// ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
     /// Less interesting code
@@ -859,6 +686,4 @@ impl API{
 
         }
     }
-
-
 }

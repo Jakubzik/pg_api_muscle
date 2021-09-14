@@ -273,7 +273,7 @@ impl Request{
         match method{
             RequestMethod::GET => "get",
             RequestMethod::POST => "post",
-            RequestMethod::POSTasGET => "post->get",
+            RequestMethod::POSTorPATCHasGET => "post->get",
             RequestMethod::PATCH => "patch",
             RequestMethod::DELETE => "delete",
             RequestMethod::SHUTDOWN => "shutdown",
