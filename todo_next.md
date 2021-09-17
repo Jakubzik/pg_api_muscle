@@ -1,7 +1,10 @@
-TOC Update: irgendwie ist der Parameter "toc" leer. Why? (2021-9-13)
+- Definiere Default Page
+- Definiere Default Err Page
 - Test für lt. etc. Überhaupt: größere Test-Suite mit Todo o.ä.
-  - db.get_parameter_where_criteria braucht Variable anstatt "="
-- Erlaube http (lokal) anstatt https. Oder sogar socket?
+- Bei Start output: auf welchem Port lausche ich? HTTP(S)?
+- Teste Restriction auf Client IP
+- Restriction auf Client IP mit Wildcard und/oder Liste von IPs
+- Erlaube http (lokal) anstatt https. Oder sogar socket? HTTP sieht gut aus: Der Unterschied in main ist BLOSS in 481/482. die if-Weiche https braucht's nicht. sf_test muss aber umgeschrieben werden.
 - Überlegen: sollte PATCH auch eine x-query-syntax-of-method=GET haben und so als select function aufrufbar sein? Schadet eigentlich nicht, oder?
 - Überlegen: sollte use_extended_url-Syntax in der API pro Endpunkt konfigurierbar sein?
 - Überlegen: sollten auch Array und Object-Typen per API konfigurierbar sein? Und überprüfbar? Und weiterleitbar an die DB?
@@ -46,3 +49,5 @@ OK - allow for =eq. - Syntax
   - api.check_query_parameters braucht Reaktion auf conf.use_eq_syntax_on_url_parameters:
       - (1) Checked-Parameter braucht ein Feld für Relation (String, bzw. "=", "!=", "<", ">", "<=", ">=", "~=", "IN")
       - (2) Falls use_eq_syntax_on_url_parameters=true muss die Relation beim Check gesetzt werden
+OK TOC Update: irgendwie ist der Parameter "toc" leer. Why? (2021-9-13)
+OK db.get_parameter_where_criteria braucht Variable anstatt "="

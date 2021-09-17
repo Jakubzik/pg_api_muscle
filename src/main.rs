@@ -1,9 +1,10 @@
-use std::{borrow::BorrowMut, convert::TryInto, env, error::Error, fmt::{self, Formatter, Display}, fs::File, io::prelude::*, process::exit, sync::Arc};
+use std::{borrow::BorrowMut, convert::TryInto, env, error::Error, fmt::{self, Formatter, Display}, fs::File, io::prelude::*, net::Ipv4Addr, process::exit, sync::Arc};
 use futures::lock::Mutex;
 use tini::Ini;
 use native_tls::Identity;
-use tokio::io::{AsyncReadExt, AsyncWriteExt};
+use tokio::{io::{AsyncReadExt, AsyncWriteExt}, net::TcpStream};
 use tokio::net::TcpListener;
+use tokio_native_tls::TlsStream;
 use self::request::Request;
 use self::response::Response;
 use self::api::API;
@@ -97,6 +98,30 @@ pub enum ParamVal {
     Text(String),
     Date(String),
     Boolean(bool),
+}
+
+// Helper so that http and https connections can
+// be handled under one umbrella stream: "VarStream"
+// Exposes read and write_all
+// @TODO: isn't ´await` called twice on these methods? Check reference and experiment
+pub enum VarStream{
+   Secure( TlsStream<TcpStream> ),
+   Insecure( TcpStream ), 
+}
+
+impl VarStream{
+    async fn read(&mut self, buffer:&mut Vec<u8>) -> tokio::io::Result<usize>{
+        match self{
+            VarStream::Secure( d ) => d.read(buffer).await,
+            VarStream::Insecure( ds ) => ds.read(buffer).await
+        }
+    }
+    async fn write_all(&mut self, buffer:&mut Vec<u8>) -> tokio::io::Result<()>{
+        match self{
+            VarStream::Secure( d ) => d.write_all(buffer).await,
+            VarStream::Insecure( ds ) => ds.write_all(buffer).await
+        }
+    }
 }
 
 const S_EMPTY: String = String::new();
@@ -338,7 +363,7 @@ impl UnCheckedParam{
 
         }
     }
-//    pub fn get_type_as_configured( s_param_value: &str, s_param_type: &str ) -> Result<ParamVal, String>{
+
     fn get_typecheck_of_query_parameter( value: &str, expected_type: ParameterType ) -> (ParamVal, String){
         match expected_type {
             ParameterType::STRING => (ParamVal::Text(value.to_string()), S_EMPTY),
@@ -383,6 +408,8 @@ pub struct MuscleConfig{
     timezone: String,                // Timezone to set Pg to
     server_read_timeout_ms: u64,     // Tweak @TODO
     server_read_chunksize: usize,     // Tweak @TODO
+    server_use_https: bool,           // Listen for https requests (true) or http?
+    client_ip_allow: Ipv4Addr,        //
     use_eq_syntax_on_url_parameters: bool // translate https://url?param=eq.5 to "param=5" (...lt.5 to "param < 5"). @TODO. true not yet implemented (August 24, 21)
 }
 
@@ -442,6 +469,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>>{
     let read_timeout = Duration::from_millis( pg_api_muscle_config.server_read_timeout_ms );
     let chunksize = pg_api_muscle_config.server_read_chunksize;
     let muscle_config = Arc::clone( &pg_api_muscle_config );
+    let b_check_client_ip = !muscle_config.client_ip_allow.eq(&Ipv4Addr::new(0,0,0,0));
 
     // API contains basically the main logic, esp. also the
     // routing table. Since the API is handed the request,
@@ -455,6 +483,15 @@ async fn main() -> Result<(), Box<dyn std::error::Error>>{
             muscle_config.use_eq_syntax_on_url_parameters
         )));
 
+
+    info!("~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~");
+    info!("Starting pg_api_muscle service");
+    info!("Listening to port {}", muscle_config.port);
+    info!("Https? {}", muscle_config.server_use_https);
+    info!("Connected to database: >{}<", muscle_config.db);
+    info!("Restricted to clients from: >{}<", muscle_config.client_ip_allow);
+    info!("~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~");
+
     loop {
         // Asynchronously wait for an inbound socket.
         let (socket, remote_addr) = tcp_listener.accept().await?;
@@ -467,6 +504,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>>{
         // that shutdown requests are only executed if they
         // come from 127.0.0.1. 
         let client_ip = remote_addr.ip().to_string();
+        
+        if b_check_client_ip {
+            if !client_ip.parse::<Ipv4Addr>().unwrap().eq(&muscle_config.client_ip_allow){ 
+                info!("Request from >{}< ignored due to client_ip_allow restrictions set in initialisation file", client_ip);
+                continue; 
+            }
+        }
 
         // Clone things for the spawned thread:
         let cloned_conf = Arc::clone( &pg_api_muscle_config );
@@ -475,13 +519,18 @@ async fn main() -> Result<(), Box<dyn std::error::Error>>{
         // Deal with the connection
         tokio::spawn(async move {
 
-            // Accept the TLS connection.
-            let mut tls_stream = match tls_acceptor.accept(socket).await{
-                Ok( stream ) => stream,
-                Err (e) => {
-                    error!("TLS Accept error: {}", e);
-                    return;
-                }
+            // If the API is configured to listen for https: accept the TLS connection.
+            // otherwise get the TcpStream
+            let mut var_stream: VarStream = match cloned_conf.server_use_https{
+                true =>  {match tls_acceptor.accept(socket).await{
+                            Ok( stream ) => VarStream::Secure(stream),
+                            Err (e) => {
+                                error!("TLS Accept error: {}", e);
+                                return;
+                            }
+                    }
+                },
+                _ => VarStream::Insecure(socket)
             };
 
             let mut s_request = String::from(""); // <- String to hold the request
@@ -501,7 +550,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>>{
             let mut n = chunksize;
             while n == chunksize{
                 let mut buffer = vec![0; chunksize];
-                n = match tokio::time::timeout(read_timeout, tls_stream
+                n = match tokio::time::timeout(read_timeout, var_stream
                         .read(&mut buffer)).await{
                             Ok( o ) => {
                                 let o = o.unwrap();
@@ -544,8 +593,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>>{
 
             v_response.append( &mut response.1 );
 
-            tls_stream
-                .write_all( &v_response )
+            var_stream
+                .write_all( v_response )
                 .await
                 .expect("failed to write data to socket");
 
@@ -556,7 +605,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>>{
                 exit(0);
             }
         });
-    }
+    } // LOOP
 }
 
 ///
@@ -627,12 +676,6 @@ mod test_get_query{
         assert_eq!( r.is_static(),  true );
     }
 
-//    #[test]
-//    fn get_url_plus_parms() {
-//        let r:Request = Request::new( "Whater?this=that&a=b", "::1" );
-//        assert_eq!( Request::get_url_plus_parms("Whater?this=that&a=b").1, "Whatever" );
-//
-//    }
     #[test]
     fn get_auth() {
         let r:Request = Request::new( "/static/path/to/this\n{\"this\":\"that\"}\nAuthorization: Bearer 1234&äß", "::1", "127.0.0.1", "" , "static");
@@ -698,6 +741,12 @@ fn get_conf( s_file: &str ) -> MuscleConfig{
             
         server_read_chunksize: conf.get("Webservice", "server_read_chunksize").expect(
             &format!("{}{}", s_err, "`server_read_chunksize` in section `Webservice`")[..]),
+
+        server_use_https: conf.get("Webservice", "https").expect(
+            &format!("{}{}", s_err, "`https` in section `Webservice`")[..]),
+
+        client_ip_allow: conf.get("Webservice", "client_ip_allow").expect(
+            &format!("{}{}", s_err, "`https` in section `Webservice`")[..]),
 
         cert_pass: conf.get("Webservice", "cert_pass").expect(
             &format!("{}{}", s_err, "`cert_pass` in section `Webservice`")[..]),

@@ -16,6 +16,41 @@
     }
   ],
   "paths": {
+    "search_for": {
+      "post": {
+        "operationId": "web_api.search_for",
+        "parameters": [],
+        "x-query-syntax-of-method": "GET",
+        "requestBody": {
+          "description": "Buch und Suchbegriff",
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/suchbegriff"
+              }
+            }
+          },
+          "required": true
+        }
+      }
+    },
+    "kapitel_meta_info": {
+      "get": {
+        "operationId": "web_api.kapitel_meta_info",
+        "parameters": [
+          {
+            "name": "kapitel_id",
+            "description": "Id des Kapitels",
+            "required": true,
+            "in": "query",
+            "schema": {
+              "type": "integer",
+              "format": "integer"
+            }
+          }
+        ]
+      }
+    },
     "toc": {
       "get": {
         "operationId": "web_api.toc",
@@ -142,6 +177,23 @@
               "format": "text"
             },
             "pass": {
+              "type": "string",
+              "format": "text"
+            }
+          }
+        },
+        "suchbegriff": {
+          "type": "object",
+          "required": [
+            "buch_id",
+            "s_text"
+          ],
+          "properties": {
+            "buch_id": {
+              "type": "integer",
+              "format": "integer"
+            },
+            "s_text": {
               "type": "string",
               "format": "text"
             }
