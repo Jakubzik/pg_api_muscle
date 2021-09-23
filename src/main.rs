@@ -1,4 +1,4 @@
-use std::{borrow::BorrowMut, convert::TryInto, env, error::Error, fmt::{self, Formatter, Display}, fs::File, io::prelude::*, net::Ipv4Addr, process::exit, sync::Arc};
+use std::{borrow::BorrowMut, convert::TryInto, env, error::Error, fmt::{self, Formatter, Display}, fs::File, io::prelude::*, net::Ipv4Addr, ops::AddAssign, process::exit, sync::Arc};
 use futures::lock::Mutex;
 use tini::Ini;
 use native_tls::Identity;
@@ -100,6 +100,12 @@ pub enum ParamVal {
     Boolean(bool),
 }
 
+// Adding Default because Clone for UnCheckedParam is not satisfied
+impl Default for ParamVal {
+    fn default() -> Self { ParamVal::Text( "not initialized".to_string() ) }
+}
+
+
 // Helper so that http and https connections can
 // be handled under one umbrella stream: "VarStream"
 // Exposes read and write_all
@@ -146,12 +152,20 @@ pub struct APIParam {
     schema: Schema
 }
 
+/// API Error returns error messages in JSON,
+/// partly those received from the database.
+/// (These are only sent if .ini file 
+/// specifies dynamic_err=default)
 #[derive(Serialize, Deserialize, Debug)]
 struct APIError {
     message: String,
     hint: String
 }
 
+/// If .ini has `api_use_eq_syntax_on_url_parameters=true`,
+/// (enabling http.../url?param=eq.1&...)
+/// this enum lists the possible relations, eq, lt etc.
+/// @todo: LIKE and IN are not configured through to db
 #[derive(PartialEq,Serialize, Clone, Deserialize, Copy, Debug)]
 pub enum CPRelation{
     Unknown,
@@ -194,6 +208,7 @@ impl CPRelation{
         }
     }
 }
+
 impl fmt::Display for CPRelation {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
       write!(f, "{}", CPRelation::db_rep( self) )
@@ -205,23 +220,6 @@ impl Default for CPRelation {
     fn default() -> Self { CPRelation::Unknown }
 }
 
-// Adding Default because Clone for UnCheckedParam is not satisfied
-impl Default for ParamVal {
-    fn default() -> Self { ParamVal::Text( "not initialized".to_string() ) }
-}
-
-// ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-// UnCheckedParam are compared against
-// API and transformed to CheckedParam if
-// they contain no problems.
-#[derive(Debug, Default, Clone, PartialEq)]
-pub struct UnCheckedParam{
-    problem: String,
-    name: String,
-    relation: CPRelation,           // If 'extended syntax' is used, =5 must be handed over as =eq.5,
-    use_extended_syntax: bool,      // and =lt.6 represents <6 for the database. Possible relations (=, < etc.)
-    value: ParamVal                 // are represented in CPRelation 
-}
 
 #[derive(Debug, Clone)]
 pub struct CheckedParam{
@@ -243,7 +241,6 @@ impl CheckedParam {
  * value)
  */
 impl UnCheckedParam{ 
-//    pub fn new(name: String, value: ParamVal, problem: String) -> Self { UnCheckedParam { problem, name, relation: CPRelation::Unknown, value } }
     pub fn new_query_parameter(name: &str, value: &str, expected_type: ParameterType) -> Self{
         let check = UnCheckedParam::get_typecheck_of_query_parameter( value, expected_type ); // .1 ist Problem, .0 ist value
         UnCheckedParam { problem: check.1, name: name.to_string(), relation: CPRelation::Unknown, value: check.0, use_extended_syntax: false } 
@@ -390,6 +387,18 @@ impl UnCheckedParam{
 }
 
 // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+// UnCheckedParam are compared against
+// API and transformed to CheckedParam if
+// they contain no problems.
+#[derive(Debug, Default, Clone, PartialEq)]
+pub struct UnCheckedParam{
+    problem: String,
+    name: String,
+    relation: CPRelation,           // If 'extended syntax' is used, =5 must be handed over as =eq.5,
+    use_extended_syntax: bool,      // and =lt.6 represents <6 for the database. Possible relations (=, < etc.)
+    value: ParamVal                 // are represented in CPRelation 
+}
+// ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 // MuscleConfiguration parameters
 #[derive (Debug)]
 pub struct MuscleConfig{
@@ -406,6 +415,9 @@ pub struct MuscleConfig{
     token_secret: String,            // Pg shared token secret: @TODO
     pg_setvar_prefix: String,        // Pg prefix for variables that are set in postgres through the token: @TODO
     timezone: String,                // Timezone to set Pg to
+    static_404_default: String,      // Default Err page for "not found" -- none if set to "none"
+    dynamic_err: String,             // Default Err JSON msg for errors in dynamic requests (or "none", meaning detailed error messages will be returned instead)
+    index_file: String,              // File to return if a folder is requested (or "none")
     server_read_timeout_ms: u64,     // Tweak @TODO
     server_read_chunksize: usize,     // Tweak @TODO
     server_use_https: bool,           // Listen for https requests (true) or http?
@@ -569,14 +581,22 @@ async fn main() -> Result<(), Box<dyn std::error::Error>>{
 
             if n == 0 { return; }
             
+//            // response is 
+//            //   .0: status + header,
+//            //   .1: content,
+//            //   .2: flag for request for static content,
+//            let mut response = handle_connection(client_ip, 
+//                s_request, &cloned_pool, 
+//                &mut api.lock().await.borrow_mut(), &cloned_conf.token_secret,
+//                &cloned_conf.static_files_folder).await;
+
             // response is 
             //   .0: status + header,
             //   .1: content,
             //   .2: flag for request for static content,
             let mut response = handle_connection(client_ip, 
                 s_request, &cloned_pool, 
-                &mut api.lock().await.borrow_mut(), &cloned_conf.token_secret,
-                &cloned_conf.static_files_folder).await;
+                &mut api.lock().await.borrow_mut(), &cloned_conf).await;
 
             let s_status_and_header = response.0; 
             let v_response = &mut s_status_and_header.into_bytes();
@@ -618,17 +638,16 @@ async fn handle_connection(s_client_ip: String,
     s_request: String, 
     db_client: &Pool, 
     mut api: &mut API, 
-    token_secret: &String,
-    static_files: &String
+    conf: &MuscleConfig
 ) -> (String, Vec<u8>, bool){
     let request = &mut Request::new( &s_request, 
         &s_client_ip,
         &api.local_ip_address, 
-        &token_secret,
-        &static_files
+        &conf.token_secret,
+        &conf.static_files_folder
      );
     api.set_request( &request );
-    Response::new( &mut api, db_client ).await.get_response()
+    Response::new( &mut api, db_client, &conf ).await.get_response()
 }
 
 // =====================================================================================
@@ -770,7 +789,16 @@ fn get_conf( s_file: &str ) -> MuscleConfig{
             &format!("{}{}", s_err, "`pg_setvar_prefix` in section `Authorization`")[..]),
 
         use_eq_syntax_on_url_parameters: conf.get("Service", "api_use_eq_syntax_on_url_parameters").expect(
-            &format!("{}{}", s_err, "`api_use_eq_syntax_on_url_parameters` in section `Service`")[..])
+            &format!("{}{}", s_err, "`api_use_eq_syntax_on_url_parameters` in section `Service`")[..]),
+
+        static_404_default: conf.get("Service", "static_404_default").expect(
+            &format!("{}{}", s_err, "`static_404_default` in section `Service`")[..]),
+
+        dynamic_err: conf.get("Service", "dynamic_err").expect(
+            &format!("{}{}", s_err, "`dynamic_err` in section `Service`")[..]),
+
+        index_file: conf.get("Service", "index_file").expect(
+            &format!("{}{}", s_err, "`index_file` in section `Service`")[..])
     }
 }
 

@@ -276,13 +276,12 @@ fn get_parameter_where_criteria( api: &mut API ) -> String{
         RequestMethod::PATCH => api.get_checked_post_params().len(),
         _ => {
             if api.get_checked_post_params().len() > 0{
-                error!("Strange: getting post params {:?}", api.get_checked_post_params());
+                error!("Strange: handling GET but getting post params {:?}", api.get_checked_post_params());
             }
             0
         }
     }; 
 
-    // @TODO: CheckedParameters need a CPRelation. 
     api.get_checked_query_params().into_iter().map( |y| { 
         ii+=1;
         format!("and \"{}\"{}${} ", &y.name, &y.relation, ii)}  ).collect::<String>().chars().skip(4).collect()
@@ -316,7 +315,7 @@ fn get_parameter_placeholder_csv( parms: &Vec<CheckedParam>, start_arg: Option<u
  *
  * @todo: leere Antwort gibt "{}" zurück -- konfigurierbar, ob JSON Antwort oder Txt?
  **/
-async fn get_first_row(client: &mut Client, s_sql: &str, prep_vals_opt: Option<&Vec::<&ParamVal>>) ->Result<String, tokio_postgres::Error>{ 
+async fn get_first_row(client: &mut Client, s_sql: &str, prep_vals_opt: Option<&Vec::<&ParamVal>>) -> Result<String, tokio_postgres::Error>{ 
 
 
     let row = match client.query_opt( s_sql, &get_pg_parameter_vector( prep_vals_opt )).await{

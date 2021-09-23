@@ -1,28 +1,28 @@
-- Definiere Default Page
-- Definiere Default Err Page
-- Test für lt. etc. Überhaupt: größere Test-Suite mit Todo o.ä.
-- Bei Start output: auf welchem Port lausche ich? HTTP(S)?
-- Teste Restriction auf Client IP
-- Restriction auf Client IP mit Wildcard und/oder Liste von IPs
-- Erlaube http (lokal) anstatt https. Oder sogar socket? HTTP sieht gut aus: Der Unterschied in main ist BLOSS in 481/482. die if-Weiche https braucht's nicht. sf_test muss aber umgeschrieben werden.
-- Überlegen: sollte PATCH auch eine x-query-syntax-of-method=GET haben und so als select function aufrufbar sein? Schadet eigentlich nicht, oder?
-- Überlegen: sollte use_extended_url-Syntax in der API pro Endpunkt konfigurierbar sein?
-- Überlegen: sollten auch Array und Object-Typen per API konfigurierbar sein? Und überprüfbar? Und weiterleitbar an die DB?
-- Ermöglichen eines Pfads für dynamische Anfragen (analog zu ./static).
+- Bring github under control
+- try db minutes
+- try SignUp replacement?
+- Umstellen, so dass mehrere Kontexte gleichzeitig (über einen Port) laufen können
 - Post-Parameter: maxlen (auch sf_test.js wieder aktivieren: Login-Name begrenzen auf 80 Zeichen)
-- Beispielprojekt für Tests entwickeln
 - Ermöglichen, dass überflüssige Parameter (Post-Parameter insbes.) zum ERR führen (in muscle.ini)
-- Configure Size limit for a request (denial of service)
-- Ponder Design question again: parse only those parts of the request that are part of the API specification? (Rather than 
-  analyse query string and payload and parse it all into parameters with names and values -- only parse what is part 
-  of the specification?)
-- do we need more than one static folder? And/or static folder alias and actual representation?
 - Wenn beim Start postgresql nicht angeschaltet ist, bleibt die Verbindung zur DB unmöglich
    - proof: systemctl stop postgresql
    - starte Debug
    - <https://localhost:8443/toc?buch_id=1> liefert "NoClientDbAvailable"
    - gewünscht: (1) reload sollte das beheben können? Oder "reconnect"?
    - (2) Bei dem speziellen Fehler (NoClientDbAvailable) sollte dann neu versucht werden, zu verbinden.
+- Configure Size limit for a request (denial of service)
+- Response: header configurierbar (Allow Access Cross Origin etc.)
+- Cookies?
+- Test für lt. etc. Überhaupt: größere Test-Suite mit Todo o.ä.
+- Restriction auf Client IP mit Wildcard und/oder Liste von IPs
+- Überlegen: sollte use_extended_url-Syntax in der API pro Endpunkt konfigurierbar sein?
+- Überlegen: Fehlermeldungsseiten pro endpoint definieren?
+- Überlegen: sollten auch Array und Object-Typen per API konfigurierbar sein? Und überprüfbar? Und weiterleitbar an die DB?
+- Ermöglichen eines Pfads/Prefixes für dynamische Anfragen (analog zu ./static).
+- Ponder Design question again: parse only those parts of the request that are part of the API specification? (Rather than 
+  analyse query string and payload and parse it all into parameters with names and values -- only parse what is part 
+  of the specification?)
+- do we need more than one static folder? And/or static folder alias and actual representation?
 - Testprojekt mit Datenbank aufstellen und Testclient implementieren (node? curl?)
 - Pfad fk2 liefert einen Fehler aus der DB: wieso wir das durchgeleitet?
 - Parameter Control:
@@ -51,3 +51,9 @@ OK - allow for =eq. - Syntax
       - (2) Falls use_eq_syntax_on_url_parameters=true muss die Relation beim Check gesetzt werden
 OK TOC Update: irgendwie ist der Parameter "toc" leer. Why? (2021-9-13)
 OK db.get_parameter_where_criteria braucht Variable anstatt "="
+OK Bei Start output: auf welchem Port lausche ich? HTTP(S)?
+OK Teste Restriction auf Client IP
+OK Erlaube http (lokal) anstatt https. Oder sogar socket? HTTP sieht gut aus: Der Unterschied in main ist BLOSS in 481/482. die if-Weiche https braucht's nicht. sf_test muss aber umgeschrieben werden.
+OK Überlegen: sollte PATCH auch eine x-query-syntax-of-method=GET haben und so als select function aufrufbar sein? Schadet eigentlich nicht, oder?
+OK Definiere Default Page
+OK Definiere Default Err Page
