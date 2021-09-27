@@ -1,8 +1,44 @@
+use std::fmt::Display;
+use std::fmt::Formatter;
+use std::fmt::Result;
+
 use log::{error, info};
 use jwt_simple::prelude::*;
 use serde_json::Value;
-use crate::RequestMethod;
-use crate::Authentication;
+// use crate::RequestMethod;
+use crate::api::Authentication;
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum RequestMethod{
+    GET,
+    POST,
+    PATCH,
+    DELETE,
+    POSTorPATCHasGET,
+    SHUTDOWN,
+    RELOAD,
+    UNKNOWN
+}
+
+
+impl Default for RequestMethod {
+    fn default() -> Self { RequestMethod::UNKNOWN }
+}
+
+impl Display for RequestMethod {
+    fn fmt(&self, f: &mut Formatter) -> Result {
+        match self{
+            RequestMethod::GET => write!(f, "Http GET"),
+            RequestMethod::POST => write!(f, "Http POST"),
+            RequestMethod::PATCH => write!(f, "Http PATCH"),
+            RequestMethod::DELETE => write!(f, "Http DELETE"),
+            RequestMethod::POSTorPATCHasGET => write!(f, "Http POST -> GET"),
+            RequestMethod::SHUTDOWN => write!(f, "SHUTDOWN"),
+            _ => write!(f, "Unknown")
+        }
+    }
+}
+
 
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct Request {

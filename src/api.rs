@@ -1,20 +1,63 @@
 // #[macro_use]
 use crate::Request;
-use crate::RequestMethod;
-use crate::Authentication;
+use crate::request::RequestMethod;
 use crate::CheckedParam;
-use crate::UnCheckedParam;
+use crate::ParameterToCheck;
 use crate::S_EMPTY;
-use crate::ParamVal;
+use crate::parameter::ParamVal;
 use crate::ParameterType;
-use crate::APIParam;
-use crate::Schema;
 
 use std::{fs::File, io::BufReader};
 use log::{debug, error, info};
 
 //#[json]
 use serde_json::Value;
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum Authentication{
+    NEEDED,
+    NOTNEEDED,
+    UNKNOWN
+}
+
+impl Default for Authentication {
+    fn default() -> Self { Authentication::UNKNOWN }
+}
+
+#[derive(Serialize, Deserialize, Debug)]
+pub struct ClaimItem{
+    name: String,
+    value: Option<String>,
+    checkval: Option<String>,
+    pg_set_as: Option<String>
+}
+
+// ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+// OpenAPI JSON Format
+#[derive(Serialize, Deserialize, Debug)]
+struct Schema {
+    r#type: String,
+    format: String
+}
+
+#[derive(Serialize, Deserialize, Debug)]
+pub struct APIParam {
+    name: String,
+    description: String,
+    r#in: String,
+    required: bool,
+    schema: Schema
+}
+
+/// API Error returns error messages in JSON,
+/// partly those received from the database.
+/// (These are only sent if .ini file 
+/// specifies dynamic_err=default)
+#[derive(Serialize, Deserialize, Debug)]
+struct APIError {
+    message: String,
+    hint: String
+}
 
 //#[derive(Debug, PartialEq)]
 pub struct API {
@@ -34,14 +77,6 @@ pub struct API {
     routing_file_read: bool,
     use_extended_url_relations: bool,
     pub local_ip_address: String // corresponds to muscle.ini, no checks made. Needed for shutdown and reload requests
-}
-
-#[derive(Serialize, Deserialize, Debug)]
-pub struct ClaimItem{
-    name: String,
-    value: Option<String>,
-    checkval: Option<String>,
-    pg_set_as: Option<String>
 }
 
 impl API{
@@ -64,10 +99,10 @@ impl API{
 
         API{
             checked_query_parameters: vec![],
-            problems_query_parameters: S_EMPTY,
+            problems_query_parameters: S_EMPTY.to_owned(),
             checked_query_params_read: false,
             checked_post_parameters: vec![],
-            problems_post_parameters: S_EMPTY,
+            problems_post_parameters: S_EMPTY.to_owned(),
             checked_post_params_read: false,
             token_name: pg_token_name.to_string(),
             pg_setvar_prefix: pg_setvar_prefix.to_string(),
@@ -211,7 +246,7 @@ impl API{
             error!("There is no request set to check against this API"); 
             self.checked_query_parameters = vec![];
             // @TODO: consider panic? process.exit(1)?
-            return S_EMPTY;
+            return S_EMPTY.to_owned();
         };
 
         // Check if an authentication is needed, and if so, 
@@ -347,17 +382,17 @@ impl API{
         debug!("Checking post parameters: looking for {} in {}", self.request.method, self.request.url );
 
         // Get obligatory parameters for this route. If we find some, ...
-        let tmp: Vec<UnCheckedParam> = match self.get_parameters_from_api( API::PARAM_TYPE_PAYLOAD ){
+        let tmp: Vec<ParameterToCheck> = match self.get_parameters_from_api( API::PARAM_TYPE_PAYLOAD ){
         
             Some( parms ) => parms.into_iter().map( 
-               |par| { UnCheckedParam::new_payload_parameter( &par.name, 
+               |par| { ParameterToCheck::new_payload_parameter( &par.name, 
                             self.request.get_payload_param( &par.name),ParameterType::from(&par.schema.r#type), 
                             par.required)
                     }
                     ).collect(),
 //
             // ... *no* parameters:
-            None => vec![ UnCheckedParam::new_err_no_route() ]
+            None => vec![ ParameterToCheck::new_err_no_route() ]
         };
 
         // separate problematic from conforming parameters
@@ -435,7 +470,7 @@ impl API{
 
     ///
     /// separates query params *with* problems from those without.
-    fn split_problems_query_parms(&mut self, query_params: &Vec<UnCheckedParam>){
+    fn split_problems_query_parms(&mut self, query_params: &Vec<ParameterToCheck>){
         let splitter = API::split_problems( query_params );
         self.checked_query_parameters = splitter.0;
         self.problems_query_parameters = splitter.1;
@@ -443,7 +478,7 @@ impl API{
 
     ///
     /// separates payload params *with* problems from those without.
-    fn split_problems_post_parms(&mut self, post_params: &Vec<UnCheckedParam>){
+    fn split_problems_post_parms(&mut self, post_params: &Vec<ParameterToCheck>){
         let splitter = API::split_problems( post_params );
         self.checked_post_parameters = splitter.0;
         self.problems_post_parameters = splitter.1;
@@ -452,7 +487,7 @@ impl API{
     ///
     /// separate UnCheckedParameters into checked parameters and a String containing
     /// problem information.
-    fn split_problems( params: &Vec<UnCheckedParam> ) -> ( Vec<CheckedParam>, String ){
+    fn split_problems( params: &Vec<ParameterToCheck> ) -> ( Vec<CheckedParam>, String ){
         let mut successfully_checked_params:Vec<CheckedParam> = vec![];
         let mut s_problems = "".to_string();
 
@@ -631,25 +666,25 @@ impl API{
         b_param_required: &bool, 
         s_param_value: &Option<&str>, 
         s_param_type: &str,
-        b_use_extended_url: bool ) -> UnCheckedParam{
+        b_use_extended_url: bool ) -> ParameterToCheck{
 
         // Do we have a value or not? ...
         match s_param_value{
 
             Some( value ) => {
                 if b_use_extended_url{
-                    UnCheckedParam::new_query_parameter_ext( s_param_name, value, ParameterType::from(s_param_type))
+                    ParameterToCheck::new_query_parameter_ext( s_param_name, value, ParameterType::from(s_param_type))
                 }else{
-                    UnCheckedParam::new_query_parameter( s_param_name, value, ParameterType::from(s_param_type))
+                    ParameterToCheck::new_query_parameter( s_param_name, value, ParameterType::from(s_param_type))
                 }
             }
 //            // ... if there *is no* value handed over, return (ERR, EMPTY, EMPTY)
             None => {
                 if *b_param_required {
-                    UnCheckedParam::new_err_missing_parameter(s_param_name)
+                    ParameterToCheck::new_err_missing_parameter(s_param_name)
 //                    );
                 }else{
-                    UnCheckedParam::new_err_non_required_parameter_missing()
+                    ParameterToCheck::new_err_non_required_parameter_missing()
                 }
 
             }

@@ -1,4 +1,4 @@
-- Bring github under control
+- Document and Test: ClaimItems etc.? (See API)
 - try db minutes
 - try SignUp replacement?
 - Umstellen, so dass mehrere Kontexte gleichzeitig (über einen Port) laufen können
@@ -57,3 +57,5 @@ OK Erlaube http (lokal) anstatt https. Oder sogar socket? HTTP sieht gut aus: De
 OK Überlegen: sollte PATCH auch eine x-query-syntax-of-method=GET haben und so als select function aufrufbar sein? Schadet eigentlich nicht, oder?
 OK Definiere Default Page
 OK Definiere Default Err Page
+OK Bring github under control
+- Response mit .0 und .1 für Header und Content. Das ist irgendwie Unsinn und geht sicher besser!

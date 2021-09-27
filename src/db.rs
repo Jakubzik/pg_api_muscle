@@ -1,8 +1,8 @@
 use deadpool_postgres::{Pool };
 use crate::API;
-use crate::ParamVal;
-use crate::RequestMethod;
-use crate::Authentication;
+use crate::parameter::ParamVal;
+use crate::request::RequestMethod;
+use crate::api::Authentication;
 use crate::CheckedParam;
 use tokio_postgres::{Client};
 use tokio_postgres::types::ToSql;
