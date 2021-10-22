@@ -1,7 +1,12 @@
+- Pfad zu den statischen Dateien relativieren (also: den 'echten' Pfad konfigurierbar machen!)
+- Cacheing mit HashMap
+- Testen: client-ip restriction, Claims, more than one context funnind
+- Documentation
+- Wo ist der Code für API reload gelandet?
 - Document and Test: ClaimItems etc.? (See API)
+- try Urlaub
 - try db minutes
 - try SignUp replacement?
-- Umstellen, so dass mehrere Kontexte gleichzeitig (über einen Port) laufen können
 - Post-Parameter: maxlen (auch sf_test.js wieder aktivieren: Login-Name begrenzen auf 80 Zeichen)
 - Ermöglichen, dass überflüssige Parameter (Post-Parameter insbes.) zum ERR führen (in muscle.ini)
 - Wenn beim Start postgresql nicht angeschaltet ist, bleibt die Verbindung zur DB unmöglich
@@ -59,3 +64,6 @@ OK Definiere Default Page
 OK Definiere Default Err Page
 OK Bring github under control
 - Response mit .0 und .1 für Header und Content. Das ist irgendwie Unsinn und geht sicher besser!
+OK - Umstellen, so dass mehrere Kontexte gleichzeitig (über einen Port) laufen können
+    - Idee: Kontexte in Config mit entsprechenden Unterobjekten anlegen, dann weitersehen. Wie geht das syntaktisch?
+    - DEAL WITH //@todo-2021-10-3 in main.rs,
