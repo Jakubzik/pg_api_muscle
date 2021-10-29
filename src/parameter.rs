@@ -40,11 +40,10 @@ pub enum ParamVal {
     Boolean(bool),
 }
 
-// Adding Default because Clone for UnCheckedParam is not satisfied
+// Needed for cloning
 impl Default for ParamVal {
     fn default() -> Self { ParamVal::Text( "not initialized".to_string() ) }
 }
-
     
 impl ParameterType{
     pub fn from( s_name: &str ) -> Self{

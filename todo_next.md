@@ -1,7 +1,9 @@
-- Pfad zu den statischen Dateien relativieren (also: den 'echten' Pfad konfigurierbar machen!)
 - Cacheing mit HashMap
+   (1) Versuche cacheing von GET für 30 Sekunden:
+       Hashmap Key ist: request.url; Hashmap Val ist (Response, Timestamp)
 - Testen: client-ip restriction, Claims, more than one context funnind
 - Documentation
+- Pfad zu den statischen Dateien relativieren (also: den 'echten' Pfad konfigurierbar machen!). Oder doch lieber die dynamischen Anfragen markieren? This is hard to decide. Es gibt ja das pg_prefix -- kann ich die statischen Dateien nicht einfach unter <app>/ einhängen?
 - Wo ist der Code für API reload gelandet?
 - Document and Test: ClaimItems etc.? (See API)
 - try Urlaub

@@ -1,0 +1,91 @@
+<html>
+	<head>
+		<title>Aufnahmetest Zusammenstellung</title>
+		<link rel="stylesheet" href="css/test-admin.css">
+	</head>
+	
+	<body>
+		<div id="grid-container">
+			<div id="header-bar">
+				<div id="logos">
+					<img src="img/as-header.png" id="logoAS"> <img src="img/uni-header.png" id="logoUNI">
+				</div>
+				<div id="titletext">
+					<p>Aufnahmetest-Zusammenstellung</p>
+				</div>
+			</div>
+			<div id="note-bar">
+			<!-- info wie zB "dieser testentwurf wurde zuletzt..." -->
+				<p>Dieser Testentwurf wurde zuletzt am <span id="e_lastedit">2021-05-08</span> bearbeitet. (... sonstige hinweise ...)</p>			
+			</div>
+			<div id="kategoriebox">
+			<!-- sel menu mit kategorien -->
+				<select id="e_catselect">
+					<option value="" disabled selected>
+						Kategorie w&auml;hlen...
+					</option>
+				</select>
+			</div>
+			<div id="terminbox">
+			<!-- infowelcher Testtermin gerade gewählt ist -->
+			<p>gew&auml;hlter Testtermin: <span id="e_termin">Wintersemester 2021/22</span></p>
+			</div>
+		<!-- linke spalte -->	
+			<div id="tagbox">
+				<h4>Tags</h4>
+				<p class="info-p">mehrere mit strg+klick w&auml;hlen</p>
+				<select multiple class="opt-box" id="e_tags"></select>
+			</div>
+			<div id="kontext-box">
+			<!-- wird nur eingeblendet, wenn eine kategorie mit textaufgaben ausgewählt ist -->
+				<h4>Verf&uuml;gbare Texte</h4>
+				<p class="info-p">Quelle ausw&auml;hlen um zugeh&ouml;rige Fragen anzuzeigen</p>
+				<div class="opt-box">
+					<div id="e_kontext_sel">
+					<!-- um das richtig zu machen brauchen wir noch gute, knappe Quellenangaben in der Datenbank -->
+					</div>
+					<div id="btn_clear_kontext" onclick="clearContext()">clear</div>
+				</div>
+			</div>
+		<!-- ende linke spalte --> 
+						
+			<!-- Liste aller Fragen der gewählten Kategorie -->
+			<div class="qbox" id="all-q-box"></div>
+			
+			<div id="shiftbuttons">
+				<div id="shiftbutton-box">
+					<div class="movebutton" id="btn_there" onclick="moveQuestionThere()"> &#62; </div>
+					<div class="movebutton" id="btn_back" onclick="moveQuestionBack()"> &#60; </div>
+				</div>
+			</div>
+			
+			<div class="qbox" id="sel-q-box">
+			<!-- alle ausgewählten Fragen für den aktuellen Testtermin -->
+			</div>
+			
+		<!-- rechte spalte -->
+		
+			<div id="count-box">
+			<!-- mal schauen, wie das im layout aussieht. infos zu fragen insgesamt gewählt, fragen pro kategorie gewählt, usw. -->
+				<p id="fragen-zahl">Fragen in diesem Test: <span id="e_fragen_total"></span></p>
+				<p>Sprachpraxis: <span id="e_fragen_spx"></span></p>
+				<p>Literatur: <span id="e_fragen_lit"></span></p>
+				<p>Linguistik: <span id="e_fragen_ling"></span></p>
+				<p>Sonstiges: <span id="e_fragen_sonst"></span></p>
+			</div>
+			
+		<!-- button ganz unten -->
+			<div id="savebox">
+			<!-- speichern-button rechts unten, unter der selfragen-box -->
+				<button onclick="saveIDs()">Speichern</button>
+			</div>
+			
+		<!-- footer --> 
+			<div id="footer">
+				<span>&copy; <a href="http://www.as.uni-heidelberg.de">Anglistik Heidelberg</a>, 2021</span>
+			</div>
+		</div>
+
+		<script src="js/02-testerstellung.js"></script>
+	</body>
+</html>

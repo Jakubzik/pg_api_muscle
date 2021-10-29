@@ -76,7 +76,7 @@ pub struct API {
     routing_file_path: String,
     routing_file_read: bool,
     use_extended_url_relations: bool,
-    pub local_ip_address: String // corresponds to muscle.ini, no checks made. Needed for shutdown and reload requests
+    pub local_ip_address: String // corresponds to muscle.ini, no checks made. Needed for shutdown and reload requests. @TODO this should not be public: use muscle.ini or config instead?!
 }
 
 impl API{
@@ -134,7 +134,7 @@ impl API{
             info!("Reading routing table (again?) ...");
             self.routing_json = match serde_json::from_reader( BufReader::new( open_api_file )){
                 // @todo: consider process.exit(0)
-                Err( _ ) => panic!("Cannot parse file with API configuration"),
+                Err( _ ) => panic!("Cannot parse file `{}` with API configuration", self.routing_file_path),
                 Ok( api ) => api
             };
 
@@ -154,7 +154,8 @@ impl API{
     fn check_rerouting( &mut self ){
         if self.request.method == RequestMethod::POST ||self.request.method == RequestMethod::PATCH  {
             if self.routing_json[ API::API_PATHS ]
-                [ &self.request.url ]
+//                [ &self.request.get_url_sans_prefix() ]
+                [ &self.request.get_url_dynamic_residue() ]
                 [ Request::get_method_as_str(self.request.method) ]
                 [ "x-query-syntax-of-method" ].as_str().unwrap_or("") == "GET" {
                 info!("--> POST request re-routed to GET syntax");
@@ -308,7 +309,7 @@ impl API{
         // @shj 2021-7-25: does this route exist?
         // [Newly needs checking since we're allowing empty parameter lists.]
         if self.routing_json[ API::API_PATHS ]
-            [ &self.request.url ]
+            [ &self.request.get_url_dynamic_residue() ]
             [ Request::get_method_as_str(self.request.method) ].is_null() {return "No route for this request.".to_string();}
 
         // Check params by calling the .get_checked_* methods,
@@ -390,7 +391,7 @@ impl API{
                             par.required)
                     }
                     ).collect(),
-//
+
             // ... *no* parameters:
             None => vec![ ParameterToCheck::new_err_no_route() ]
         };
@@ -423,7 +424,7 @@ impl API{
                 ).collect(),
 
                 // ... *no* parameters:
-                None => {info!("... no parameters required for this request `{}` method {}", self.request.url, self.request.method); 
+                None => {info!("... no parameters required for this request `{}` method {}", self.request.get_url_dynamic_residue(), self.request.method); 
                     vec![]
                 }
             };
@@ -456,7 +457,8 @@ impl API{
         };
 
         match self.routing_json[ API::API_PATHS ]
-            [ &self.request.url ]
+//            [ &self.request.get_url_sans_prefix() ]
+            [ &self.request.get_url_dynamic_residue() ]
             [ Request::get_method_as_str(self.request.method) ]
             [ API::API_QUERY ].as_str() {
 
@@ -524,7 +526,8 @@ impl API{
     // @TODO see also ~220: document authentication stuff
     fn get_auth_claim_items_from_api( &mut self ) -> Vec<ClaimItem>{
         let s_method = Request::get_method_as_str( self.request.method );
-        let s_path = &self.request.url;
+//        let s_path = &self.request.get_url_sans_prefix();
+        let s_path = &self.request.get_url_dynamic_residue();
         let result: Vec<ClaimItem> = match serde_json::from_value( self.routing_json[ API::API_PATHS ]
             [ s_path ]
             [ s_method ]
@@ -549,7 +552,8 @@ impl API{
     fn get_parameters_from_api( &mut self, param_type: u8 ) -> Option<Vec<APIParam>> {
 
         let s_method = Request::get_method_as_str( self.request.method );
-        let s_path = &self.request.url;
+//        let s_path = &self.request.get_url_sans_prefix();
+        let s_path = &self.request.get_url_dynamic_residue();
         let mut res: Vec<APIParam> = vec![];
 
         if param_type == API::PARAM_TYPE_PAYLOAD {
@@ -711,7 +715,8 @@ impl API{
     /// "x-auth-method":"forward_jwt_bearer",
     fn check_auth_need( &mut self ){
         if self.routing_json[ API::API_PATHS ]
-            [ &self.request.url ]
+//            [ &self.request.get_url_sans_prefix() ]
+            [ &self.request.get_url_dynamic_residue() ]
             [ Request::get_method_as_str(self.request.method) ]
             [ "x-auth-method" ] == "forward_jwt_bearer" {
                 info!("...needs JWT authentication");

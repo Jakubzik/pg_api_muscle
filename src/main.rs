@@ -1,5 +1,8 @@
-use std::{borrow::{BorrowMut}, collections::HashMap, env, error::Error, fmt::{self}, fs::File, io::prelude::*, net::Ipv4Addr, process::exit, sync::Arc};
-use futures::lock::Mutex;
+use std::{borrow::{BorrowMut}, collections::HashMap, env, error::Error, fmt::{self}, fs::File, io::prelude::*, net::Ipv4Addr, ops::Add, process::exit, sync::Arc};
+//use futures::lock::Mutex;
+use tokio::sync::Mutex;
+use tokio::sync::RwLock;
+use jwt_simple::prelude::coarsetime::Instant;
 use native_tls::Identity;
 use tokio::{io::{AsyncReadExt, AsyncWriteExt}, net::TcpStream};
 use tokio::net::TcpListener;
@@ -51,6 +54,30 @@ impl VarStream{
 
 // ----------------------------------------------------------------------------------------
 // Structs
+
+#[derive(Clone)]
+pub struct ResponseCache{
+    pub CachedResponse: Response,
+    pub Timestamp: Instant,
+    pub NoHit: bool
+}
+
+impl ResponseCache {
+   pub fn new( r: Response ) -> Self{
+       Self{
+           CachedResponse: r,
+           Timestamp: Instant::now(),
+           NoHit: false
+       }
+   }
+   pub fn no_hit( ) -> Self{
+       Self{
+           CachedResponse: Response::new_404(),
+           Timestamp: Instant::now(),
+           NoHit: true
+       }
+   }
+}
 
 /// If .ini has `api_use_eq_syntax_on_url_parameters=true`,
 /// (enabling http.../url?param=eq.1&...)
@@ -190,6 +217,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>>{
         ))))
     }).collect();
 
+    let mut response_cache_base: HashMap<String, ResponseCache> = HashMap::new();
+    //let mut response_cache = Arc::new( Mutex::new(response_cache_base) );
+    let mut response_cache = Arc::new( RwLock::new(response_cache_base) );
+
+
     let muscle_apis = Arc::new( muscle_apis_a );
 
     log_config_information(&muscle_config, &pg_api_muscle_config);
@@ -222,6 +254,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>>{
         let spawned_apis = Arc::clone(&muscle_apis);
         let spawned_conf = Arc::clone( &pg_api_muscle_config );
         let spawned_pool = db_pools.clone();
+        let spawned_response_cache = Arc::clone( &response_cache);
+        //let spawned_response_cache = response_cache.clone();
 
         // Deal with the connection
         tokio::spawn(async move {
@@ -289,19 +323,78 @@ async fn main() -> Result<(), Box<dyn std::error::Error>>{
             };
 
             let mut is_known_prefix = false;
-            let mut response = match spawned_conf.contexts.get( &prefix ).is_none(){
-                true => Response::new_404(),
-                _ =>  {
-                    is_known_prefix = true;
-                    request.set_token_secret(&spawned_conf.contexts.get( &prefix ).unwrap().token_secret);
-//y                    request.set_static_folder(&spawned_conf.contexts.get( prefix ).unwrap().static_files_folder);
-                    request.pg_service_prefix = spawned_conf.contexts.get( &prefix ).unwrap().pg_service_prefix.to_owned();
-                    let mut api_ = spawned_apis.get( &prefix ).unwrap().lock().await;
-                    let mut api = api_.borrow_mut();
-                    api.set_request( &request );
-                    Response::new( &mut api, &spawned_pool.get( &prefix ).unwrap(), &spawned_conf.contexts.get( &prefix ).unwrap() ).await
-                }
-            };
+            let mut cached_r: Option<Response> = None;
+            // NEU CACHE TEST 2021-10-23
+            if !spawned_conf.contexts.get( &prefix ).is_none(){
+                request.pg_service_prefix = spawned_conf.contexts.get( &prefix ).unwrap().pg_service_prefix.to_owned();
+                
+    //            let tmp = spawned_response_cache.lock().await;
+                let tmp = spawned_response_cache.read().await;
+                let tmp2 = tmp.get ( &request.url );
+    //Offentlichtlich besteht das Problem darin, dass read.await irgendein poison auslöst oder so?
+    //let tmp2:Option<ResponseCache> = None;
+                if request.is_static(){
+                    // Schaue, ob Antwort schon im Cache:
+    //                cached_r = spawned_response_cache.lock().await.get ( &request.url ).unwrap_or(ResponseCache::no_hit());
+    //                cached_r = match spawned_response_cache.lock().await.get ( &request.url ).unwrap(){
+                    cached_r = match tmp2{
+                        Some( a ) => {
+                            let re = a.CachedResponse.clone();
+                            info!("CACHE: Found this static request in the cache...");
+                            Some( re.to_owned() )
+                        },
+    //                    Some( a ) => None,
+                        _ => None
+
+                    }
+    //                cached_r = match tmp{
+    //                    Some (resp) => {
+    //                        // Muss Timestamp prüfen @todo 2021-10
+    //                        // https://doc.rust-lang.org/std/time/index.html
+    //                        info!("Im Cache gefunden: {}", request.url);
+    //                        Some( &resp.CachedResponse )
+    //                    },
+    //                    _ => None
+    //                };
+                };
+
+                drop( tmp );
+            }
+            let mut response ;
+            if cached_r.is_none(){
+                // NEU CACHE TEST 2021-10-23 ENDE
+                response = match spawned_conf.contexts.get( &prefix ).is_none(){
+                    true => Response::new_404(),
+                    _ =>  {
+                        is_known_prefix = true;
+                        request.set_token_secret(&spawned_conf.contexts.get( &prefix ).unwrap().token_secret);
+//                        request.pg_service_prefix = spawned_conf.contexts.get( &prefix ).unwrap().pg_service_prefix.to_owned();
+                        let mut api_ = spawned_apis.get( &prefix ).unwrap().lock().await;
+                        let mut api = api_.borrow_mut();
+                        api.set_request( &request );
+                        Response::new( &mut api, &spawned_pool.get( &prefix ).unwrap(), &spawned_conf.contexts.get( &prefix ).unwrap() ).await
+                    }
+                };
+            }else{
+                info!("Sending response from the cache. ");
+                response = cached_r.unwrap().clone();
+            }
+
+            // BRAUCHT IF NICHT IM CACHE...
+            // NEU CACHE
+            
+            // THIS IF NEEDS STRUCTURE, BECAUSE ALSO USED ABOVE ... 
+            // background is: is_static needs the prefix set.
+            if !spawned_conf.contexts.get( &prefix ).is_none(){
+            if request.is_static(){
+//                spawned_response_cache.lock().await.insert( request.url.clone(), ResponseCache::new( response.clone() ) );
+                // Folgende Zeil hängt. Stattdessen: https://docs.rs/futures-locks/0.6.0/futures_locks/struct.Mutex.html?
+//                let mut ttmp = spawned_response_cache.lock().await;
+                let mut ttmp = spawned_response_cache.write().await;
+                ttmp.insert( request.url.clone(), ResponseCache::new( response.clone() ) );
+                info!("CACHE: added this request: {}", request.url);
+            }
+            }
 
             let v_response = &mut response.http_status_len_header.into_bytes();
 

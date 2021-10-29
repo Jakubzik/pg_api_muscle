@@ -1,4 +1,4 @@
-use crate::config::MuscleConfig;
+use crate::config::MuscleConfigContext;
 use std::{fmt::{self}};
 use crate::Request;
 use crate::request::RequestMethod;
@@ -67,8 +67,20 @@ impl Response{
     const CONTENT_TYPE_JSON: &'static str = "application/json;charset=UTF-8";
     const CONTENT_TYPE_HTML: &'static str = "text/html;charset=UTF-8";
 
+    pub fn new_404( ) -> Self{
+        let header = "Content-Type: text/html;charset=UTF-8\r\n".to_string();
+        let response =  ( HttpStatus::HTTP_404, String::from("<html><body>Not found</body></html>").as_bytes().to_vec());
+
+        Self{
+            http_status_len_header: format!( "{}\r\nContent-Length: {}\r\n{}\r\n", response.0, response.1.len(), header),
+            http_status: response.0,
+            http_content: response.1,
+            content_type_header: header,
+            is_static: true
+        }
+    }
     /* Constructor */
-    pub async fn new( api: &mut API, client: &Pool, conf: &MuscleConfig ) -> Self {
+    pub async fn new( api: &mut API, client: &Pool, conf: &MuscleConfigContext ) -> Self {
 
         info!("Handling >{}< request for >{}< from >{}< with params >{}< and (abbrev.) payload >{}<", 
             Request::get_method_as_str( api.request.method ), 
@@ -216,12 +228,16 @@ impl Response{
     }
 
     /// Returns .1 status and headers, .2 content
-    async fn handle_get( api: &mut API, client: &Pool, conf: &MuscleConfig ) -> (HttpStatus, Vec<u8>){
+    async fn handle_get( api: &mut API, client: &Pool, conf: &MuscleConfigContext ) -> (HttpStatus, Vec<u8>){
 
         // ========================================================================
         // Static request, send file
         if api.request.is_static() {
-            let mut f_path = "static/".to_owned() + &api.request.url.chars().skip(7).collect::<String>().to_string();
+            // @TODO needs thinking over: what does this concatenation do? Nothing? But might be useful for an independant static files thing?
+//            let mut f_path = conf.static_files_folder.to_owned() + &api.request.get_url_sans_prefix().chars().skip(conf.static_files_folder.to_owned().len()).collect::<String>().to_string();
+//            let mut f_path = api.request.get_url_sans_prefix().chars().skip(conf.static_files_folder.to_owned().len()).collect::<String>().to_string();
+            let mut f_path = api.request.url.to_owned();
+//            let mut f_path = conf.static_files_folder.to_owned() + &api.request.url.chars().skip(conf.static_files_folder.to_owned().len()).collect::<String>().to_string();
             let msg_not_found = "Sorry, requested ressource not found. ".as_bytes().to_vec();
             let mut b_is_404 = false;
 

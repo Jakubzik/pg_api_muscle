@@ -34,6 +34,7 @@ impl Display for RequestMethod {
             RequestMethod::DELETE => write!(f, "Http DELETE"),
             RequestMethod::POSTorPATCHasGET => write!(f, "Http POST -> GET"),
             RequestMethod::SHUTDOWN => write!(f, "SHUTDOWN"),
+            RequestMethod::RELOAD => write!(f, "RELOAD"),
             _ => write!(f, "Unknown")
         }
     }
@@ -53,12 +54,14 @@ pub struct Request {
     pub auth_claim: Option<Value>,
     pub api_needs_auth: Authentication,
     pub token_secret: String,
-    pub static_folder: String,
+    pub pg_service_prefix: String,
     pub method: RequestMethod,
     pub method_reroute: RequestMethod,  // Do I need this? @TODO ... For POST to SQL procedures that need GET syntax from the response
     pub ip_address: String,
     pub is_shutdown: bool, // Request to shutdown the service
     pub is_reload_config: bool, // Request to reload configuration without shutting down
+    prefix: Option<String>,
+    prefix_set: bool,
     payload: Value
 }
 
@@ -112,7 +115,8 @@ impl Request{
     ///   ...
     /// }
     /// ```
-    pub fn new( s_req: &str, s_ip_addr_client: &str, s_local_ip: &str, token_secret: &str, static_folder: &str ) -> Self {
+    pub fn new( s_req: &str, s_ip_addr_client: &str, s_local_ip: &str) -> Self {
+    //pub fn new( s_req: &str, s_ip_addr_client: &str, s_local_ip: &str, token_secret: &str, static_folder: &str ) -> Self {
 
         // -----------------------------------------------------
         // Stream starts e.g. with "GET /path/to/foo?whater=1
@@ -126,11 +130,11 @@ impl Request{
         let b_is_request_for_api_reload = Request::get_method( &s_first_line ) == RequestMethod::RELOAD && s_ip_addr_client.eq( s_local_ip );
         info!("Reload request? {}", b_is_request_for_api_reload);
         
-        let claims = Request::get_auth_claims( ct_payload_auth.2.to_string(), token_secret.to_string() );
+//        let claims = Request::get_auth_claims( ct_payload_auth.2.to_string(), token_secret.to_string() );
 
         Self{
-            payload_is_read: false,
-            query_is_read: false,
+            payload_is_read: false, // so don't read again
+            query_is_read: false,   // so don't read again
             q_parms: url_plus_par.1.to_string(),
             p_parms: ct_payload_auth.1.to_string(),
             url: url_plus_par.0.to_string(),
@@ -139,13 +143,15 @@ impl Request{
             method_reroute: RequestMethod::UNKNOWN,
             content_type: ct_payload_auth.0.to_string(),
             authorization: ct_payload_auth.2.to_string(),
-            auth_claim: claims,
+            auth_claim: None,
             is_shutdown: b_is_request_for_shutdown,
             is_reload_config: b_is_request_for_api_reload,
             api_needs_auth: Authentication::UNKNOWN,
-            token_secret: token_secret.to_string(),
-            static_folder: static_folder.to_string(),
+            token_secret: String::from("not set"),
+            pg_service_prefix: String::from("not set"),
             ip_address: s_ip_addr_client.to_string(),
+            prefix: None,
+            prefix_set: false,
             payload: Value::Null
         }
     }
@@ -157,6 +163,36 @@ impl Request{
             self.query_is_read = true;
         }
         &self.query_params
+    }
+    
+    /// We're assuming that self.url starts with "/", otherwise result may be unexpected
+    pub fn get_prefix( &mut self ) -> Option<String> {
+        if !self.prefix_set{
+            let end_bytes = self.url.find("/").unwrap_or(0);
+            if end_bytes == 0 { self.prefix = None; 
+            }else{ self.prefix = Some( self.url[0..end_bytes].to_string() );}
+            self.prefix_set = true;
+        }
+        self.prefix.to_owned()
+    }
+
+    // Helper to calculate paths relative to the context
+    // Public at the moment only for testing (in main)
+    pub fn get_url_sans_prefix( &mut self ) -> String{
+        match self.get_prefix(){
+            Some (prefix) => self.url[ prefix.len()+1..].to_string(),
+            None => "".to_string()
+        }
+    }
+
+    // server:8080/prefix/dyn/item?id=4
+    // get_url_dynamic_residue = "item?id=4"
+    // Public at the moment only for testing (in main)
+    pub fn get_url_dynamic_residue( &mut self ) -> String{
+        match self.get_prefix(){
+            Some (prefix) => self.url[ prefix.len()+2 + self.pg_service_prefix.len()..].to_string(),
+            None => "".to_string()
+        }
     }
 
     /// This request's payload parameters as Vector<(Name, Value)>
@@ -192,9 +228,14 @@ impl Request{
         self.get_payload_params_as_value().get( s_name )
     }
 
+    pub fn is_dynamic( &mut self ) -> bool {
+        if self.pg_service_prefix.eq("not set"){ panic!("Must set `service_prefix` before asking if this is static or dynamic!"); }
+        self.get_url_sans_prefix().starts_with( &self.pg_service_prefix )
+
+    }
     /// Is this a request for a static page?
-    pub fn is_static( &self ) -> bool {
-        self.url.starts_with( &self.static_folder )
+    pub fn is_static( &mut self ) -> bool {
+        ! self.is_dynamic()
     }
     
     /// Authentication Token
@@ -209,7 +250,8 @@ impl Request{
         }
     }
 
-    fn get_auth_claims( s_auth: String, s_token_secret: String ) -> Option<Value> {
+//    fn get_auth_claims( s_auth: String, s_token_secret: String ) -> Option<Value> {
+    fn get_auth_claims( s_auth: &String, s_token_secret: &String ) -> Option<Value> {
 //        let key = HS256Key::from_bytes(b"5JkCkNsRw7Iww16OILugtNso8UCzXluo");
         let key = HS256Key::from_bytes( s_token_secret.as_bytes() );
         match key.verify_token::<Value>(&s_auth, None){
@@ -248,7 +290,7 @@ impl Request{
     }
 
     /// Static method: extract uri (including parameters) from HTTP request
-    fn get_uri( s_first_line: &str ) -> String{
+    pub fn get_uri( s_first_line: &str ) -> String{
         let s_uri = match s_first_line.splitn(2, '/').last(){
             Some( uri ) => uri.to_string(),
             _ => {error!("Cannot parse into URI: {}", s_first_line); 
@@ -318,6 +360,11 @@ impl Request{
         }
     }
 
+    pub fn set_token_secret( &mut self, token_secret: &String ){
+        self.token_secret = token_secret.to_string();
+        self.auth_claim = Request::get_auth_claims( &self.authorization, &token_secret.to_string() );
+    }
+//
 }
 #[cfg(test)]
 mod test_get_query{
