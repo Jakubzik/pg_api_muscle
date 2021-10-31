@@ -1,6 +1,6 @@
 - Cacheing mit HashMap
-   (1) Versuche cacheing von GET für 30 Sekunden:
-       Hashmap Key ist: request.url; Hashmap Val ist (Response, Timestamp)
+  - Konfigurierbarkeit: wie setze ich die Cache-Größe für die einzelnen Präfixe um?
+  - Muss purge testen.
 - Testen: client-ip restriction, Claims, more than one context funnind
 - Documentation
 - Pfad zu den statischen Dateien relativieren (also: den 'echten' Pfad konfigurierbar machen!). Oder doch lieber die dynamischen Anfragen markieren? This is hard to decide. Es gibt ja das pg_prefix -- kann ich die statischen Dateien nicht einfach unter <app>/ einhängen?
@@ -69,3 +69,5 @@ OK Bring github under control
 OK - Umstellen, so dass mehrere Kontexte gleichzeitig (über einen Port) laufen können
     - Idee: Kontexte in Config mit entsprechenden Unterobjekten anlegen, dann weitersehen. Wie geht das syntaktisch?
     - DEAL WITH //@todo-2021-10-3 in main.rs,
+   (1) Versuche cacheing von GET für 30 Sekunden:
+       Hashmap Key ist: request.url; Hashmap Val ist (Response, Timestamp)

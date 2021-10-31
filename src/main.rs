@@ -1,8 +1,9 @@
-use std::{borrow::{BorrowMut}, collections::HashMap, env, error::Error, fmt::{self}, fs::File, io::prelude::*, net::Ipv4Addr, ops::Add, process::exit, sync::Arc};
+use std::{borrow::{BorrowMut}, collections::HashMap, env, error::Error, fmt::{self}, fs::File, io::prelude::*, net::Ipv4Addr, process::exit, sync::Arc};
 //use futures::lock::Mutex;
 use tokio::sync::Mutex;
 use tokio::sync::RwLock;
-use jwt_simple::prelude::coarsetime::Instant;
+//use jwt_simple::prelude::coarsetime::Instant;
+use std::time::Instant;
 use native_tls::Identity;
 use tokio::{io::{AsyncReadExt, AsyncWriteExt}, net::TcpStream};
 use tokio::net::TcpListener;
@@ -56,27 +57,128 @@ impl VarStream{
 // Structs
 
 #[derive(Clone)]
-pub struct ResponseCache{
-    pub CachedResponse: Response,
-    pub Timestamp: Instant,
-    pub NoHit: bool
+pub struct ResponseCacheElement{
+    pub cached_response: Response,
+    pub timestamp: Instant,
+    pub life_span: Duration, 
+    pub no_hit: bool
 }
 
-impl ResponseCache {
+impl ResponseCacheElement {
    pub fn new( r: Response ) -> Self{
        Self{
-           CachedResponse: r,
-           Timestamp: Instant::now(),
-           NoHit: false
+           cached_response: r,
+           timestamp: Instant::now(),
+           no_hit: false,
+           life_span: Duration::from_secs(10) //@TODO make configurable: 10 seconds for now
        }
    }
-   pub fn no_hit( ) -> Self{
-       Self{
-           CachedResponse: Response::new_404(),
-           Timestamp: Instant::now(),
-           NoHit: true
-       }
+
+   pub fn is_expired( &self ) -> bool{
+       Instant::now().duration_since( self.timestamp ) > self.life_span
    }
+
+//   //@TODO: probably not needed
+//   pub fn no_hit( ) -> Self{
+//       Self{
+//           cached_response: Response::new_404(),
+//           timestamp: Instant::now(),
+//           no_hit: true
+//       }
+//   }
+}
+
+#[derive(Clone)]
+pub struct ResponseCache{
+    pub cache: HashMap<String, ResponseCacheElement>,
+    pub size: usize,
+    pub size_limit: usize
+}
+
+impl ResponseCache{
+    pub fn new() -> Self{
+        Self{
+            cache:HashMap::new(),
+            size: 0,
+            size_limit: 1 * 1024 * 1024  // 500 MB --> @TODO, make configurable
+        }
+    }
+
+    // needs to check for duplicates, calculate sizes etc.
+    pub fn add( &mut self, url: String, r: Response ){
+        if self.cache.get( &url ).is_none(){
+            let r_size = &r.http_content.len();
+            if self.size + r_size > self.size_limit{
+                info!("Cache: limit of {} reached, trying purge before adding new response.", self.size_limit);
+                self.purge_expired_responses();
+            }
+            if self.size + r_size > self.size_limit{
+                info!("Cache: limit of {} still exceeded after purge, cannot add `{}`", self.size_limit, &url);
+            }else{
+                self.size = self.size + r_size;
+                debug!("Cache: adding to cache: `{}`, size is now: {} MB", url, self.get_size_mb());
+                self.cache.insert(url, ResponseCacheElement::new( r ) );
+            }
+        }else{
+            debug!("Cache: already in cache: `{}`", url);
+        }
+    }
+
+    // Cleans the cache of all expired responses
+    pub fn purge_expired_responses( &mut self ){
+        // Changes self.cache and self.size while iterating through self.cache.
+        // Have to take cache and size out of self to avoid borrow-trouble:
+        let mut local_cache = std::mem::take(&mut self.cache);
+        let mut local_size = self.size;
+
+        self.cache.iter().for_each( | resp | {
+            if resp.1.is_expired() { 
+                match local_cache.remove( &resp.0.to_string() ){
+                    Some( r ) => {
+                        debug!("Cache: removing `{}` from cache: expired.", &resp.0);
+                        local_size = local_size - r.cached_response.http_content.len();
+                    }
+                    _ => {}
+                }
+            }
+        });
+
+        // Re-instate cache and size
+        self.cache = local_cache;
+        self.size = local_size;
+
+    }
+
+    pub fn get_size_mb( &self ) -> usize{
+        self.size / (1024*1024)
+    }
+
+    pub fn drop( &mut self, url: &str ){
+        match self.cache.remove( &url.to_string() ){
+            Some( r ) => self.size = self.size - r.cached_response.http_content.len(),
+            _ => {}
+        }
+    }
+
+    // Get the response cached for this URL or None.
+    pub fn get( &self, url: &str ) -> Option<Response>{
+        match self.cache.get( url ){
+            Some( resp ) => {
+                if resp.is_expired(){
+                    // It would make sense to delete the expired response from the cache,
+                    // but this is a *read* method, and self is not mutable.
+                    debug!("Cache: expired response to `{}`.", url);
+                    None
+                }else{
+                    Some( resp.cached_response.clone() )
+                }
+            },
+            _ => {
+                info!("Cache: not in cache: `{}`", url);
+                None
+            }
+        }
+    }
 }
 
 /// If .ini has `api_use_eq_syntax_on_url_parameters=true`,
@@ -217,10 +319,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>>{
         ))))
     }).collect();
 
-    let mut response_cache_base: HashMap<String, ResponseCache> = HashMap::new();
-    //let mut response_cache = Arc::new( Mutex::new(response_cache_base) );
-    let mut response_cache = Arc::new( RwLock::new(response_cache_base) );
-
+    let response_cache_base= ResponseCache::new();
+    let response_cache = Arc::new( RwLock::new(response_cache_base) );
 
     let muscle_apis = Arc::new( muscle_apis_a );
 
@@ -328,37 +428,23 @@ async fn main() -> Result<(), Box<dyn std::error::Error>>{
             if !spawned_conf.contexts.get( &prefix ).is_none(){
                 request.pg_service_prefix = spawned_conf.contexts.get( &prefix ).unwrap().pg_service_prefix.to_owned();
                 
-    //            let tmp = spawned_response_cache.lock().await;
-                let tmp = spawned_response_cache.read().await;
-                let tmp2 = tmp.get ( &request.url );
-    //Offentlichtlich besteht das Problem darin, dass read.await irgendein poison auslöst oder so?
-    //let tmp2:Option<ResponseCache> = None;
-                if request.is_static(){
-                    // Schaue, ob Antwort schon im Cache:
-    //                cached_r = spawned_response_cache.lock().await.get ( &request.url ).unwrap_or(ResponseCache::no_hit());
-    //                cached_r = match spawned_response_cache.lock().await.get ( &request.url ).unwrap(){
-                    cached_r = match tmp2{
+                let local_response_cache = spawned_response_cache.read().await;
+                let opt_cached_response = local_response_cache.get ( &request.url );
+
+//                if request.is_static(){
+                    cached_r = match opt_cached_response{
                         Some( a ) => {
-                            let re = a.CachedResponse.clone();
-                            info!("CACHE: Found this static request in the cache...");
+                            let re = a.clone();
+                            info!("CACHE: Found this request in the cache...");
                             Some( re.to_owned() )
                         },
-    //                    Some( a ) => None,
                         _ => None
 
-                    }
-    //                cached_r = match tmp{
-    //                    Some (resp) => {
-    //                        // Muss Timestamp prüfen @todo 2021-10
-    //                        // https://doc.rust-lang.org/std/time/index.html
-    //                        info!("Im Cache gefunden: {}", request.url);
-    //                        Some( &resp.CachedResponse )
-    //                    },
-    //                    _ => None
-    //                };
-                };
+                    };
+//                };
 
-                drop( tmp );
+                // Free the lock
+                drop( local_response_cache );
             }
             let mut response ;
             if cached_r.is_none(){
@@ -368,7 +454,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>>{
                     _ =>  {
                         is_known_prefix = true;
                         request.set_token_secret(&spawned_conf.contexts.get( &prefix ).unwrap().token_secret);
-//                        request.pg_service_prefix = spawned_conf.contexts.get( &prefix ).unwrap().pg_service_prefix.to_owned();
                         let mut api_ = spawned_apis.get( &prefix ).unwrap().lock().await;
                         let mut api = api_.borrow_mut();
                         api.set_request( &request );
@@ -386,14 +471,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>>{
             // THIS IF NEEDS STRUCTURE, BECAUSE ALSO USED ABOVE ... 
             // background is: is_static needs the prefix set.
             if !spawned_conf.contexts.get( &prefix ).is_none(){
-            if request.is_static(){
-//                spawned_response_cache.lock().await.insert( request.url.clone(), ResponseCache::new( response.clone() ) );
-                // Folgende Zeil hängt. Stattdessen: https://docs.rs/futures-locks/0.6.0/futures_locks/struct.Mutex.html?
-//                let mut ttmp = spawned_response_cache.lock().await;
+
+            // Need a better determination of what to cache. Obviously
+            // cacheing static requests excluively makes little sense.
+//            if request.is_static(){
                 let mut ttmp = spawned_response_cache.write().await;
-                ttmp.insert( request.url.clone(), ResponseCache::new( response.clone() ) );
-                info!("CACHE: added this request: {}", request.url);
-            }
+                ttmp.add( request.url.clone(), response.clone()  );
+//            }
             }
 
             let v_response = &mut response.http_status_len_header.into_bytes();

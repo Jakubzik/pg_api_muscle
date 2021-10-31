@@ -17,6 +17,9 @@ pub struct MuscleConfigContext{
     pub static_404_default: String,      // Default Err page for "not found" -- none if set to "none"
     pub dynamic_err: String,             // Default Err JSON msg for errors in dynamic requests (or "none", meaning detailed error messages will be returned instead)
     pub index_file: String,              // File to return if a folder is requested (or "none")
+    pub cache_size_max: usize,              // Maximum size in MB for responses to be cached.
+    pub cache_static_lifespan: usize,              // Lifespan of static requests in seconds (set to 0 to deactivate static cache)
+    pub cache_dynamic_lifespan: usize,              // Lifespan of static requests in seconds (set to 0 to deactivate dynamic cache)
     pub use_eq_syntax_on_url_parameters: bool // translate https://url?param=eq.5 to "param=5" (...lt.5 to "param < 5"). @TODO. true not yet implemented (August 24, 21)
 }
 pub struct MuscleConfigCommon{
@@ -69,6 +72,15 @@ impl MuscleConfigCommon{
                 index_file: conf.get(&format!("{}_Webservice", prefix), "index_file").expect(
                     &format!("{}`index_file` in section `{}_Webservice`", s_err, prefix)[..]),
 
+                cache_size_max: conf.get(&format!("{}_Webservice", prefix), "cache_size_max").expect(
+                    &format!("{}`cache_size_max` in section `{}_Webservice`", s_err, prefix)[..]),
+
+                cache_dynamic_lifespan: conf.get(&format!("{}_Webservice", prefix), "cache_dynamic_lifespan").expect(
+                    &format!("{}`cache_dynamic_lifespan` in section `{}_Webservice`", s_err, prefix)[..]),
+                    
+                cache_static_lifespan: conf.get(&format!("{}_Webservice", prefix), "cache_static_lifespan").expect(
+                    &format!("{}`cache_static_lifespan` in section `{}_Webservice`", s_err, prefix)[..]),
+
                 token_name: conf.get(&format!("{}_Authorization", prefix), "pg_token_name").expect(
                     &format!("{}`pg_token_name` in section `{}_Authorization`", s_err, prefix)[..]),
 
@@ -83,7 +95,6 @@ impl MuscleConfigCommon{
 
                 api_conf: conf.get(&format!("{}_API", prefix), "api_conf").expect(
                     &format!("{}`api_conf` in section `{}_API`", s_err, prefix)[..]),
-
 
                 dynamic_err: conf.get(&format!("{}_API", prefix), "dynamic_err").expect(
                     &format!("{}`dynamic_err` in section `{}_API`", s_err, prefix)[..]),
