@@ -20,7 +20,6 @@ pub enum RequestMethod{
     UNKNOWN
 }
 
-
 impl Default for RequestMethod {
     fn default() -> Self { RequestMethod::UNKNOWN }
 }
@@ -205,6 +204,12 @@ impl Request{
             self.payload_is_read = true;
         }
         &self.payload
+    }
+
+    // A unique signature as key for the response-cache
+    // URL plus query parameters.
+    pub fn get_cache_signature(&self) -> String{
+        format!("{}?{}#auth={}", self.url, self.q_parms, self.authorization)
     }
     
     /// Get value of a parameter in this request's query

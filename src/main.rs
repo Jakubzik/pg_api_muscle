@@ -1,7 +1,7 @@
 use std::{borrow::{BorrowMut}, collections::HashMap, env, error::Error, fmt::{self}, fs::File, io::prelude::*, net::Ipv4Addr, process::exit, sync::Arc};
 //use futures::lock::Mutex;
 use tokio::sync::Mutex;
-use tokio::sync::RwLock;
+//use tokio::sync::RwLock;
 //use jwt_simple::prelude::coarsetime::Instant;
 use std::time::Instant;
 use native_tls::Identity;
@@ -77,15 +77,6 @@ impl ResponseCacheElement {
    pub fn is_expired( &self ) -> bool{
        Instant::now().duration_since( self.timestamp ) > self.life_span
    }
-
-//   //@TODO: probably not needed
-//   pub fn no_hit( ) -> Self{
-//       Self{
-//           cached_response: Response::new_404(),
-//           timestamp: Instant::now(),
-//           no_hit: true
-//       }
-//   }
 }
 
 #[derive(Clone)]
@@ -109,18 +100,18 @@ impl ResponseCache{
         if self.cache.get( &url ).is_none(){
             let r_size = &r.http_content.len();
             if self.size + r_size > self.size_limit{
-                info!("Cache: limit of {} reached, trying purge before adding new response.", self.size_limit);
+                debug!("Cache: size limit of {} MB reached, trying purge before adding new response.", self.size_limit);
                 self.purge_expired_responses();
             }
             if self.size + r_size > self.size_limit{
-                info!("Cache: limit of {} still exceeded after purge, cannot add `{}`", self.size_limit, &url);
+                info!("Cache: limit of {} MB still exceeded after purge, cannot cache `{}`", self.size_limit, &url);
             }else{
                 self.size = self.size + r_size;
-                debug!("Cache: adding to cache: `{}`, size is now: {} MB", url, self.get_size_mb());
+                debug!("Cache: adding `{}`, size is now: {} MB", url, self.get_size_mb());
                 self.cache.insert(url, ResponseCacheElement::new( r ) );
             }
         }else{
-            debug!("Cache: already in cache: `{}`", url);
+            debug!("Cache: no add, already present: `{}`", url);
         }
     }
 
@@ -135,7 +126,7 @@ impl ResponseCache{
             if resp.1.is_expired() { 
                 match local_cache.remove( &resp.0.to_string() ){
                     Some( r ) => {
-                        debug!("Cache: removing `{}` from cache: expired.", &resp.0);
+                        debug!("Cache: removing `{}` because expired.", &resp.0);
                         local_size = local_size - r.cached_response.http_content.len();
                     }
                     _ => {}
@@ -161,20 +152,20 @@ impl ResponseCache{
     }
 
     // Get the response cached for this URL or None.
-    pub fn get( &self, url: &str ) -> Option<Response>{
+    pub fn get( &mut self, url: &str ) -> Option<Response>{
         match self.cache.get( url ){
             Some( resp ) => {
                 if resp.is_expired(){
-                    // It would make sense to delete the expired response from the cache,
-                    // but this is a *read* method, and self is not mutable.
                     debug!("Cache: expired response to `{}`.", url);
+                    self.drop( url );
                     None
                 }else{
+                    debug!("Cache: retrieved `{}`.", url);
                     Some( resp.cached_response.clone() )
                 }
             },
             _ => {
-                info!("Cache: not in cache: `{}`", url);
+                debug!("Cache: not in cache: `{}`", url);
                 None
             }
         }
@@ -319,8 +310,15 @@ async fn main() -> Result<(), Box<dyn std::error::Error>>{
         ))))
     }).collect();
 
-    let response_cache_base= ResponseCache::new();
-    let response_cache = Arc::new( RwLock::new(response_cache_base) );
+    let response_cache_a:HashMap<String, Arc<Mutex<ResponseCache>>> = pg_api_muscle_config.contexts.values().map( | context | {
+        (context.prefix.to_owned(), Arc::new(Mutex::new(
+            ResponseCache::new()
+        )))
+    }).collect();
+//    let response_cache_base= ResponseCache::new();
+    // @todo change halloween
+//    let response_cache = Arc::new( Mutex::new(response_cache_base) );
+    let response_cache = Arc::new( response_cache_a );
 
     let muscle_apis = Arc::new( muscle_apis_a );
 
@@ -374,49 +372,16 @@ async fn main() -> Result<(), Box<dyn std::error::Error>>{
                 _ => VarStream::Insecure(socket)
             };
 
-            let mut s_request = String::from(""); // <- String to hold the request
-
-            // Oddly, tls_stream.read( &buffer ) always reads CHUNKS of 16384 bytes (16 kB) and 
-            // then stops. Longer payloads are not read. This is why .read() needs to be
-            // called in a loop.
-            //
-            // Unfortunatley, the stream does not recognize EOF. So if a chunk is exactly
-            // 16384 bytes long, the loop loops, and the thread *hangs* waiting for
-            // more input ... for ever.
-            //
-            // This is why the .read() is called in a timeout of configurable ms-length
-            //
-            // Today (April in 2021), I am not sure, if the 16 kB are specific to this 
-            // machine? This is why it's also configurable.
-            let mut n = chunksize;
-            while n == chunksize{
-                let mut buffer = vec![0; chunksize];
-                n = match tokio::time::timeout(read_timeout, var_stream
-                        .read(&mut buffer)).await{
-                            Ok( o ) => {
-                                let o = o.unwrap();
-                                s_request.push_str( &String::from_utf8_lossy( &buffer )); o
-                            },
-                            Err( e) => {
-                                // disambiguate timeout from real error
-                                match e.source(){
-                                    Some (_sou) => error!("Error reading tcp stream: {:?}", e),
-                                    None => error!("Timeout reading request after {} bytes", n)
-                                }
-                                0
-                            }
-                        }
-            }
-
+            // Read incoming stream into s_request
+            let (s_request, n) = read_request(chunksize, read_timeout, &mut var_stream).await;
             if n == 0 { return; }
 
             // A little q&d: I need the prefix of the request at this point,
             // so I can choose the right API for the response-construction.
             let mut request = Request::new(&s_request, &client_ip,&spawned_conf.addr );
 
-            // Hätte hier gerne ein Request-Objekt mit seinen Methoden, um
-            // (1) schauen zu können, was das Prefix ist, und
-            // (2) zu wissen, ob es ein shutdown/reload request ist.
+            // get the request's prefix or "no prefix"
+            // @todo: extract '#no_prefix' and react to it: return?
             let prefix = match &request.get_prefix(){
                 Some( prefix ) => prefix.to_owned(),
                 _ => String::from( "#no_prefix" ).to_owned()
@@ -424,27 +389,25 @@ async fn main() -> Result<(), Box<dyn std::error::Error>>{
 
             let mut is_known_prefix = false;
             let mut cached_r: Option<Response> = None;
-            // NEU CACHE TEST 2021-10-23
-            if !spawned_conf.contexts.get( &prefix ).is_none(){
+
+            if spawned_conf.contexts.get( &prefix ).is_some(){
+                // let the request know which queries to to postgrest (and which ones are static)
                 request.pg_service_prefix = spawned_conf.contexts.get( &prefix ).unwrap().pg_service_prefix.to_owned();
                 
-                let local_response_cache = spawned_response_cache.read().await;
-                let opt_cached_response = local_response_cache.get ( &request.url );
+                // Need to make sure that only GET requests (or only those who are configured to be cached?) are cached!
+                // Also neet to catch the `unwrap` here
+                // @TODO: Is there a cache? Are we configured to use one at all? What happens if unwrap fails?
+                let mut local_response_cache = spawned_response_cache.get( &prefix ).unwrap().lock().await; // @todo halloween change
+                let opt_cached_response = local_response_cache.get ( &request.get_cache_signature() );
 
-//                if request.is_static(){
-                    cached_r = match opt_cached_response{
-                        Some( a ) => {
-                            let re = a.clone();
-                            info!("CACHE: Found this request in the cache...");
-                            Some( re.to_owned() )
-                        },
-                        _ => None
-
-                    };
-//                };
+                cached_r = match opt_cached_response{
+                    Some( a ) => Some( a.clone().to_owned() ),
+                    _ => None
+                };
 
                 // Free the lock
-                drop( local_response_cache );
+                // Double-check: is this needed?
+               // drop( local_response_cache );
             }
             let mut response ;
             if cached_r.is_none(){
@@ -475,8 +438,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>>{
             // Need a better determination of what to cache. Obviously
             // cacheing static requests excluively makes little sense.
 //            if request.is_static(){
-                let mut ttmp = spawned_response_cache.write().await;
-                ttmp.add( request.url.clone(), response.clone()  );
+                let mut ttmp = spawned_response_cache.get( &prefix ).unwrap().lock().await; // halloween chance
+                ttmp.add( request.get_cache_signature().clone(), response.clone()  );
 //            }
             }
 
@@ -507,6 +470,30 @@ async fn main() -> Result<(), Box<dyn std::error::Error>>{
             }
         });
     } // LOOP
+}
+
+async fn read_request(chunksize: usize, read_timeout: Duration, var_stream: &mut VarStream) -> (String, usize) {
+    let mut s_request = String::from("");
+    let mut n = chunksize;
+    while n == chunksize{
+        let mut buffer = vec![0; chunksize];
+        n = match tokio::time::timeout(read_timeout, var_stream
+                .read(&mut buffer)).await{
+                    Ok( o ) => {
+                        let o = o.unwrap();
+                        s_request.push_str( &String::from_utf8_lossy( &buffer )); o
+                    },
+                    Err( e) => {
+                        // disambiguate timeout from real error
+                        match e.source(){
+                            Some (_sou) => error!("Error reading tcp stream: {:?}", e),
+                            None => error!("Timeout reading request after {} bytes", n)
+                        }
+                        0
+                    }
+                }
+    }
+    (s_request, n)
 }
 
 fn log_config_information(muscle_config: &Arc<MuscleConfigCommon>, pg_api_muscle_config: &Arc<MuscleConfigCommon>) {

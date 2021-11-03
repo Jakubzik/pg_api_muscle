@@ -26,34 +26,34 @@ pub struct Response {
 
 #[derive(Debug, PartialEq, Clone)]
 pub enum HttpStatus{
-    HTTP_200,
-    HTTP_404,
-    HTTP_400,
-    HTTP_500
+    HTTP200,
+    HTTP404,
+    HTTP400,
+    HTTP500
 }
 
 impl HttpStatus{
     pub fn as_string( status: &HttpStatus ) -> String{
         match status{
-            HttpStatus::HTTP_200 => "HTTP/1.1 200 OK".to_string(),
-            HttpStatus::HTTP_400 => "HTTP/1.1 400 BAD REQUEST".to_string(),
-            HttpStatus::HTTP_404 => "HTTP/1.1 404 NOT FOUND".to_string(),
-            HttpStatus::HTTP_500 => "HTTP/1.1 500 INTERNAL SERVER ERROR".to_string()
+            HttpStatus::HTTP200 => "HTTP/1.1 200 OK".to_string(),
+            HttpStatus::HTTP400 => "HTTP/1.1 400 BAD REQUEST".to_string(),
+            HttpStatus::HTTP404 => "HTTP/1.1 404 NOT FOUND".to_string(),
+            HttpStatus::HTTP500 => "HTTP/1.1 500 INTERNAL SERVER ERROR".to_string()
         }
     }
 
     fn is_error( &self ) -> bool{
         match self{
-            HttpStatus::HTTP_200 => false,
-            HttpStatus::HTTP_400 => true,
-            HttpStatus::HTTP_404 => true,
-            HttpStatus::HTTP_500 => true
+            HttpStatus::HTTP200 => false,
+            HttpStatus::HTTP400 => true,
+            HttpStatus::HTTP404 => true,
+            HttpStatus::HTTP500 => true
         }
     }
 }
 
 impl Default for HttpStatus {
-    fn default() -> Self { HttpStatus::HTTP_500 }
+    fn default() -> Self { HttpStatus::HTTP500 }
 }
 
 impl fmt::Display for HttpStatus {
@@ -65,11 +65,11 @@ impl fmt::Display for HttpStatus {
 impl Response{
 
     const CONTENT_TYPE_JSON: &'static str = "application/json;charset=UTF-8";
-    const CONTENT_TYPE_HTML: &'static str = "text/html;charset=UTF-8";
+//    const CONTENT_TYPE_HTML: &'static str = "text/html;charset=UTF-8";
 
     pub fn new_404( ) -> Self{
         let header = "Content-Type: text/html;charset=UTF-8\r\n".to_string();
-        let response =  ( HttpStatus::HTTP_404, String::from("<html><body>Not found</body></html>").as_bytes().to_vec());
+        let response =  ( HttpStatus::HTTP404, String::from("<html><body>Not found</body></html>").as_bytes().to_vec());
 
         Self{
             http_status_len_header: format!( "{}\r\nContent-Length: {}\r\n{}\r\n", response.0, response.1.len(), header),
@@ -94,7 +94,7 @@ impl Response{
             RequestMethod::DELETE => Response::handle_delete( api, client ).await,
             RequestMethod::POST => Response::handle_post( api, client).await,
             RequestMethod::PATCH => Response::handle_patch( api, client).await,
-            _ => ( HttpStatus::HTTP_404, b"Method not implemented".to_vec() )
+            _ => ( HttpStatus::HTTP404, b"Method not implemented".to_vec() )
         };
 
 //        let content_type = Response::CONTENT_TYPE_JSON;
@@ -170,16 +170,16 @@ impl Response{
             // Request does not deviate from api:
             "" => match get_db_response( client, api ).await{
 
-                Ok( db_response ) => (HttpStatus::HTTP_200, db_response.as_bytes().to_vec()),
+                Ok( db_response ) => (HttpStatus::HTTP200, db_response.as_bytes().to_vec()),
                 Err( e ) => {error!("...db problem on PATCH: {}", e);
-                    (HttpStatus::HTTP_400, serde_json::to_string( 
+                    (HttpStatus::HTTP400, serde_json::to_string( 
                             &APIError{ message: e.to_string(), hint: "No hint".to_string()}).unwrap().as_bytes().to_vec()) 
                 } 
             },
 
             // Request DOES deviate from api, let's produce an error
             deviation => {error!("... bad PATCH request: `{}`.", deviation); 
-                (HttpStatus::HTTP_400, 
+                (HttpStatus::HTTP400, 
                  serde_json::to_string( &APIError{ message: deviation.to_string(), hint: "No hint".to_string()}).unwrap().as_bytes().to_vec()) } 
         }
     }
@@ -191,16 +191,16 @@ impl Response{
             // Request does not deviate from api:
             "" => match get_db_response( client, api ).await{
 
-                Ok( db_response ) => (HttpStatus::HTTP_200, db_response.as_bytes().to_vec()),
+                Ok( db_response ) => (HttpStatus::HTTP200, db_response.as_bytes().to_vec()),
                 Err( e ) => {error!("...db problem on DELETE: {}", e);
-                    (HttpStatus::HTTP_400, serde_json::to_string( 
+                    (HttpStatus::HTTP400, serde_json::to_string( 
                             &APIError{ message: e.to_string(), hint: "No hint".to_string()}).unwrap().as_bytes().to_vec())
                 } 
             },
 
             // Request DOES deviate from api:
             deviation => {error!("... bad DELETE request: `{}`.", deviation); 
-                (HttpStatus::HTTP_400, 
+                (HttpStatus::HTTP400, 
                  serde_json::to_string( &APIError{ message: deviation.to_string(), hint: "No hint".to_string()}).unwrap().as_bytes().to_vec()) } 
         }
     }
@@ -212,16 +212,16 @@ impl Response{
             // Request does not deviate from api
             "" => match get_db_response( client, api ).await{
 
-                Ok( db_response ) => (HttpStatus::HTTP_200, db_response.as_bytes().to_vec()),
+                Ok( db_response ) => (HttpStatus::HTTP200, db_response.as_bytes().to_vec()),
                 Err( e ) => {error!("...db problem on POST: {}", e);
-                    (HttpStatus::HTTP_400, serde_json::to_string( 
+                    (HttpStatus::HTTP400, serde_json::to_string( 
                             &APIError{ message: e.to_string(), hint: "No hint".to_string()}).unwrap().as_bytes().to_vec()) 
                 } 
             },
 
             // Request DOES deviate from api:
             deviation => {error!("... bad POST request: `{}`.", deviation); 
-                (HttpStatus::HTTP_400, 
+                (HttpStatus::HTTP400, 
                  serde_json::to_string( 
                      &APIError{ message: deviation.to_string(), hint: "No hint".to_string()}).unwrap().as_bytes().to_vec()) } 
         }
@@ -279,9 +279,9 @@ impl Response{
             };
 
             if b_is_404 { 
-                ( HttpStatus::HTTP_404, page )
+                ( HttpStatus::HTTP404, page )
             }else{
-                ( HttpStatus::HTTP_200, page )
+                ( HttpStatus::HTTP200, page )
             }
 
         }else{
@@ -292,17 +292,17 @@ impl Response{
                 // Request does not deviate from api
                 "" => match get_db_response( client, api ).await{
 
-                    Ok( db_response ) => ( HttpStatus::HTTP_200, db_response.as_bytes().to_vec() ),
+                    Ok( db_response ) => ( HttpStatus::HTTP200, db_response.as_bytes().to_vec() ),
 
                     Err( e ) => {info!("...db problem on GET: {}", e);
-                        ( HttpStatus::HTTP_400, format!("{} ", serde_json::to_string( 
+                        ( HttpStatus::HTTP400, format!("{} ", serde_json::to_string( 
                                 &APIError{ message: e.to_string(), hint: "No hint".to_string()}).unwrap()).as_bytes().to_vec())
                     }
                 },
 
                 // Request DOES deviate from api:
                 deviation => {error!("... bad GET request: `{}`.", deviation); 
-                    ( HttpStatus::HTTP_400, 
+                    ( HttpStatus::HTTP400, 
                       serde_json::to_string( 
                           &APIError{ message: deviation.to_string(), hint: "No hint".to_string() } 
                 ).unwrap().as_bytes().to_vec())}

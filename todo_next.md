@@ -1,6 +1,15 @@
 - Cacheing mit HashMap
   - Konfigurierbarkeit: wie setze ich die Cache-Größe für die einzelnen Präfixe um?
+     - Pro Hashmap pro Kontext
+        - simple Verwaltung von Cache-Größen
+        - vllt. simple Erweiterbarkeit (?)
+     - Pro Gesamt-Hashmap
+        - ?
+     -> Muss HashMap prefix, ResponseCache einführen. Jeez, das wird nervig.
+  - Make sure that only GET requests are cached.
+  - Cache von static und dynamic testen. Irgendwie muss der Terminal Output gefiltert werden, vemrutlich mit einer Launch Config?
   - Muss purge testen.
+  - Request braucht eine eindeutige Signatur: URL + QueryParams [ + Token?]
 - Testen: client-ip restriction, Claims, more than one context funnind
 - Documentation
 - Pfad zu den statischen Dateien relativieren (also: den 'echten' Pfad konfigurierbar machen!). Oder doch lieber die dynamischen Anfragen markieren? This is hard to decide. Es gibt ja das pg_prefix -- kann ich die statischen Dateien nicht einfach unter <app>/ einhängen?
