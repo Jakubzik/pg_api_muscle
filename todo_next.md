@@ -1,4 +1,10 @@
 - Cacheing mit HashMap
+  - Durchsehen von "main" auf todo
+  - cache-Vorhaltedauer aus Config-datei auslesen und umsetzen: erstmal generell, dann ggf. pro Element?
+  - Reload und Shutdown einfügen und verbessern
+  - Tests mit Config:
+  -  (a) sf mit Cache, ap ohne Cache
+  -  (b) Cache Größe ausreizen
   - Konfigurierbarkeit: wie setze ich die Cache-Größe für die einzelnen Präfixe um?
      - Pro Hashmap pro Kontext
         - simple Verwaltung von Cache-Größen
@@ -80,3 +86,4 @@ OK - Umstellen, so dass mehrere Kontexte gleichzeitig (über einen Port) laufen 
     - DEAL WITH //@todo-2021-10-3 in main.rs,
    (1) Versuche cacheing von GET für 30 Sekunden:
        Hashmap Key ist: request.url; Hashmap Val ist (Response, Timestamp)
+OK  - Cache als eigene Datei?

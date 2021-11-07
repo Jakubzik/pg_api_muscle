@@ -1,16 +1,12 @@
 use std::{borrow::{BorrowMut}, collections::HashMap, env, error::Error, fmt::{self}, fs::File, io::prelude::*, net::Ipv4Addr, process::exit, sync::Arc};
-//use futures::lock::Mutex;
 use tokio::sync::Mutex;
-//use tokio::sync::RwLock;
-//use jwt_simple::prelude::coarsetime::Instant;
-use std::time::Instant;
 use native_tls::Identity;
 use tokio::{io::{AsyncReadExt, AsyncWriteExt}, net::TcpStream};
 use tokio::net::TcpListener;
 use tokio_native_tls::TlsStream;
 use self::request::Request;
 use self::response::Response;
-use self::{config::MuscleConfigCommon, api::API, parameter::{CheckedParam, ParameterToCheck, ParameterType}};
+use self::{cache::ResponseCache, config::MuscleConfigCommon, api::API, parameter::{CheckedParam, ParameterToCheck, ParameterType}};
 use log::{debug, error, info};
 use std::time::Duration;
 use deadpool_postgres::{Config, ManagerConfig, Pool, RecyclingMethod};
@@ -22,6 +18,7 @@ mod request;
 mod response;
 mod api;
 mod config;
+mod cache;
 
 #[macro_use]
 extern crate serde;
@@ -55,122 +52,6 @@ impl VarStream{
 
 // ----------------------------------------------------------------------------------------
 // Structs
-
-#[derive(Clone)]
-pub struct ResponseCacheElement{
-    pub cached_response: Response,
-    pub timestamp: Instant,
-    pub life_span: Duration, 
-    pub no_hit: bool
-}
-
-impl ResponseCacheElement {
-   pub fn new( r: Response ) -> Self{
-       Self{
-           cached_response: r,
-           timestamp: Instant::now(),
-           no_hit: false,
-           life_span: Duration::from_secs(10) //@TODO make configurable: 10 seconds for now
-       }
-   }
-
-   pub fn is_expired( &self ) -> bool{
-       Instant::now().duration_since( self.timestamp ) > self.life_span
-   }
-}
-
-#[derive(Clone)]
-pub struct ResponseCache{
-    pub cache: HashMap<String, ResponseCacheElement>,
-    pub size: usize,
-    pub size_limit: usize
-}
-
-impl ResponseCache{
-    pub fn new() -> Self{
-        Self{
-            cache:HashMap::new(),
-            size: 0,
-            size_limit: 1 * 1024 * 1024  // 500 MB --> @TODO, make configurable
-        }
-    }
-
-    // needs to check for duplicates, calculate sizes etc.
-    pub fn add( &mut self, url: String, r: Response ){
-        if self.cache.get( &url ).is_none(){
-            let r_size = &r.http_content.len();
-            if self.size + r_size > self.size_limit{
-                debug!("Cache: size limit of {} MB reached, trying purge before adding new response.", self.size_limit);
-                self.purge_expired_responses();
-            }
-            if self.size + r_size > self.size_limit{
-                info!("Cache: limit of {} MB still exceeded after purge, cannot cache `{}`", self.size_limit, &url);
-            }else{
-                self.size = self.size + r_size;
-                debug!("Cache: adding `{}`, size is now: {} MB", url, self.get_size_mb());
-                self.cache.insert(url, ResponseCacheElement::new( r ) );
-            }
-        }else{
-            debug!("Cache: no add, already present: `{}`", url);
-        }
-    }
-
-    // Cleans the cache of all expired responses
-    pub fn purge_expired_responses( &mut self ){
-        // Changes self.cache and self.size while iterating through self.cache.
-        // Have to take cache and size out of self to avoid borrow-trouble:
-        let mut local_cache = std::mem::take(&mut self.cache);
-        let mut local_size = self.size;
-
-        self.cache.iter().for_each( | resp | {
-            if resp.1.is_expired() { 
-                match local_cache.remove( &resp.0.to_string() ){
-                    Some( r ) => {
-                        debug!("Cache: removing `{}` because expired.", &resp.0);
-                        local_size = local_size - r.cached_response.http_content.len();
-                    }
-                    _ => {}
-                }
-            }
-        });
-
-        // Re-instate cache and size
-        self.cache = local_cache;
-        self.size = local_size;
-
-    }
-
-    pub fn get_size_mb( &self ) -> usize{
-        self.size / (1024*1024)
-    }
-
-    pub fn drop( &mut self, url: &str ){
-        match self.cache.remove( &url.to_string() ){
-            Some( r ) => self.size = self.size - r.cached_response.http_content.len(),
-            _ => {}
-        }
-    }
-
-    // Get the response cached for this URL or None.
-    pub fn get( &mut self, url: &str ) -> Option<Response>{
-        match self.cache.get( url ){
-            Some( resp ) => {
-                if resp.is_expired(){
-                    debug!("Cache: expired response to `{}`.", url);
-                    self.drop( url );
-                    None
-                }else{
-                    debug!("Cache: retrieved `{}`.", url);
-                    Some( resp.cached_response.clone() )
-                }
-            },
-            _ => {
-                debug!("Cache: not in cache: `{}`", url);
-                None
-            }
-        }
-    }
-}
 
 /// If .ini has `api_use_eq_syntax_on_url_parameters=true`,
 /// (enabling http.../url?param=eq.1&...)
@@ -263,29 +144,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>>{
     // -------------------------------------------------------
     // Set up DEADPOOL
     // See <https://docs.rs/deadpool-postgres/0.7.0/deadpool_postgres/config/struct.Config.html>
-    let db_pools: HashMap<String, Pool> = pg_api_muscle_config.contexts.values().map(|context | {
-        let mut deadpool_config = Config::new();
-        deadpool_config.dbname = Some(context.db.to_string());
-        deadpool_config.user = Some(context.db_user.to_string());
-        deadpool_config.password = Some(context.db_pass.to_string());
-        deadpool_config.manager = Some(ManagerConfig { recycling_method: RecyclingMethod::Fast });
 
-        ( context.prefix.to_owned(), deadpool_config.create_pool(NoTls).unwrap() )
-    }).collect();
-
-//    This (below) does not make sure that the timezone is set on all clients;
-//    it may set the timezone on *recycled* clients, but when a new client is
-//    initiated into the pool, GMT is set again. Waiting for a future version 
-//    of tokio for this, cf.
-//    <https://github.com/sfackler/rust-postgres/issues/147#event-4149833164>
-//    cfg.manager = Some(ManagerConfig { recycling_method: RecyclingMethod::Custom(format!("set timezone='Europe/Berlin'")) });
-//    Nor does this work:
-//    cfg.options = Some(format!("-c timezone={}", conf.timezone.to_string()));
-//    let pool = deadpool_config.create_pool(NoTls).unwrap();
-
-    // adjust_timezone( &mut pool.get().await.unwrap(), "Europe/Berlin").await;
-    // DEADPOOL END
-    // -------------------------------------------------------
 
     // time_out specifies when to stop waiting for more
     // input from the socket
@@ -300,27 +159,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>>{
     // Aufgabe, wenn man mal mit whitelists/blacklists/wildcards arbeiten möchte?
     let b_check_client_ip = !muscle_config.client_ip_allow.eq(&Ipv4Addr::new(0,0,0,0));
 
-    let muscle_apis_a:HashMap<String, Arc<Mutex<API>>> = pg_api_muscle_config.contexts.values().map( | context | {
-        (context.prefix.to_owned(), Arc::new(Mutex::new(
-            API::new( &muscle_config.addr, 
-                &context.token_name, 
-                &context.pg_setvar_prefix, 
-                &context.api_conf,
-                context.use_eq_syntax_on_url_parameters
-        ))))
-    }).collect();
-
-    let response_cache_a:HashMap<String, Arc<Mutex<ResponseCache>>> = pg_api_muscle_config.contexts.values().map( | context | {
-        (context.prefix.to_owned(), Arc::new(Mutex::new(
-            ResponseCache::new()
-        )))
-    }).collect();
-//    let response_cache_base= ResponseCache::new();
-    // @todo change halloween
-//    let response_cache = Arc::new( Mutex::new(response_cache_base) );
-    let response_cache = Arc::new( response_cache_a );
-
-    let muscle_apis = Arc::new( muscle_apis_a );
+    let db_pools_master = initialize_db_pool_per_context(&pg_api_muscle_config);
+    let response_cache_master = Arc::new( initialize_response_cache_per_context(&pg_api_muscle_config));
+    let muscle_apis_master = Arc::new( initialize_config_per_context(&pg_api_muscle_config));
 
     log_config_information(&muscle_config, &pg_api_muscle_config);
 
@@ -328,7 +169,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>>{
         // Asynchronously wait for an inbound socket.
         let (socket, remote_addr) = tcp_listener.accept().await?;
         let tls_acceptor = tls_acceptor.clone();
-        info!("Accepting connection from {}", remote_addr);
+        debug!("Accepting connection from {}", remote_addr);
 
         // Need the ip address for logging and to make sure
         // that shutdown and reload requests are only executed if they
@@ -349,18 +190,19 @@ async fn main() -> Result<(), Box<dyn std::error::Error>>{
         }
 
         // Clone some objects things for the spawned thread:
-        let spawned_apis = Arc::clone(&muscle_apis);
-        let spawned_conf = Arc::clone( &pg_api_muscle_config );
-        let spawned_pool = db_pools.clone();
-        let spawned_response_cache = Arc::clone( &response_cache);
-        //let spawned_response_cache = response_cache.clone();
+        let apis = Arc::clone(&muscle_apis_master);
+        let conf = Arc::clone( &pg_api_muscle_config );
+        let db_pool = db_pools_master.clone();
+        let response_cache = Arc::clone( &response_cache_master);
 
         // Deal with the connection
         tokio::spawn(async move {
 
-            // If the API is configured to listen for https: accept the TLS connection.
-            // otherwise get the TcpStream
-            let mut var_stream: VarStream = match spawned_conf.server_use_https{
+            // ----------------------------------------------------------------------------------------------------------------------------
+            // Digest incoming data
+            //
+            // Handle and read either https or http input
+            let mut var_stream: VarStream = match conf.server_use_https{
                 true =>  {match tls_acceptor.accept(socket).await{
                             Ok( stream ) => VarStream::Secure(stream),
                             Err (e) => {
@@ -376,71 +218,67 @@ async fn main() -> Result<(), Box<dyn std::error::Error>>{
             let (s_request, n) = read_request(chunksize, read_timeout, &mut var_stream).await;
             if n == 0 { return; }
 
-            // A little q&d: I need the prefix of the request at this point,
-            // so I can choose the right API for the response-construction.
-            let mut request = Request::new(&s_request, &client_ip,&spawned_conf.addr );
+            // Initialize Request-object 
+            let mut request = Request::new(&s_request, &client_ip,&conf.addr );
 
-            // get the request's prefix or "no prefix"
-            // @todo: extract '#no_prefix' and react to it: return?
+            // ----------------------------------------------------------------------------------------------------------------------------
+            // Determine this request's prefix, send 404 if unknown,
+            // initialize configuration for this prefix otherwise.
             let prefix = match &request.get_prefix(){
                 Some( prefix ) => prefix.to_owned(),
                 _ => String::from( "#no_prefix" ).to_owned()
             };
 
-            let mut is_known_prefix = false;
             let mut cached_r: Option<Response> = None;
+            let mut cache_response_for_n_secs: u8=0;
+            let local_context = conf.contexts.get( &prefix );
 
-            if spawned_conf.contexts.get( &prefix ).is_some(){
+            if local_context.is_some(){
                 // let the request know which queries to to postgrest (and which ones are static)
-                request.pg_service_prefix = spawned_conf.contexts.get( &prefix ).unwrap().pg_service_prefix.to_owned();
-                
-                // Need to make sure that only GET requests (or only those who are configured to be cached?) are cached!
-                // Also neet to catch the `unwrap` here
-                // @TODO: Is there a cache? Are we configured to use one at all? What happens if unwrap fails?
-                let mut local_response_cache = spawned_response_cache.get( &prefix ).unwrap().lock().await; // @todo halloween change
-                let opt_cached_response = local_response_cache.get ( &request.get_cache_signature() );
+                request.pg_service_prefix = local_context.unwrap().pg_service_prefix.to_owned();
 
-                cached_r = match opt_cached_response{
-                    Some( a ) => Some( a.clone().to_owned() ),
+                // @TODO: Also neet to catch the `unwrap` here
+                // @TODO: Is there a cache? Are we configured to use one at all? What happens if unwrap fails?
+                cached_r = match response_cache.get( &prefix ){
+                    Some (cache) => {
+//                        let tmp = cache.lock().await;
+                        match (cache.lock().await).get(&request.get_cache_signature()){
+                            Some( cached_response ) => Some( cached_response.clone().to_owned() ),
+                            _ => None
+                        }
+                    },
                     _ => None
                 };
-
-                // Free the lock
-                // Double-check: is this needed?
-               // drop( local_response_cache );
             }
-            let mut response ;
+
+            let mut response;
             if cached_r.is_none(){
                 // NEU CACHE TEST 2021-10-23 ENDE
-                response = match spawned_conf.contexts.get( &prefix ).is_none(){
-                    true => Response::new_404(),
-                    _ =>  {
-                        is_known_prefix = true;
-                        request.set_token_secret(&spawned_conf.contexts.get( &prefix ).unwrap().token_secret);
-                        let mut api_ = spawned_apis.get( &prefix ).unwrap().lock().await;
+                response = match local_context{
+                    None => Response::new_404(),
+                    Some( context ) =>  {
+                        request.set_token_secret(&context.token_secret);
+                        let mut api_ = apis.get( &prefix ).unwrap().lock().await;
                         let mut api = api_.borrow_mut();
                         api.set_request( &request );
-                        Response::new( &mut api, &spawned_pool.get( &prefix ).unwrap(), &spawned_conf.contexts.get( &prefix ).unwrap() ).await
+                        // At this point, I should also retrieve cache signatures to devalue:
+                        cache_response_for_n_secs = api.get_cache_lifetime(); // <- method not yet implemented. Also, obviously, the request needs to be set before I can decide
+                        Response::new( &mut api, &db_pool.get( &prefix ).unwrap(), &conf.contexts.get( &prefix ).unwrap() ).await
                     }
                 };
             }else{
-                info!("Sending response from the cache. ");
+                debug!("Sending response from the cache. ");
                 response = cached_r.unwrap().clone();
             }
 
-            // BRAUCHT IF NICHT IM CACHE...
-            // NEU CACHE
-            
-            // THIS IF NEEDS STRUCTURE, BECAUSE ALSO USED ABOVE ... 
-            // background is: is_static needs the prefix set.
-            if !spawned_conf.contexts.get( &prefix ).is_none(){
+            // @TODO Adding to cache should only happen if it isn't alread cached, right?
+            // so ... is_some and cached_r.is_none?
+            if local_context.is_some(){
 
-            // Need a better determination of what to cache. Obviously
-            // cacheing static requests excluively makes little sense.
-//            if request.is_static(){
-                let mut ttmp = spawned_response_cache.get( &prefix ).unwrap().lock().await; // halloween chance
+                // Need a better determination of what to cache. Obviously
+                // cacheing static requests excluively makes little sense.
+                let mut ttmp = response_cache.get( &prefix ).unwrap().lock().await; // halloween chance
                 ttmp.add( request.get_cache_signature().clone(), response.clone()  );
-//            }
             }
 
             let v_response = &mut response.http_status_len_header.into_bytes();
@@ -451,10 +289,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>>{
             // png but fails on download; chrome does not display.
             // Even with the linebreak, wget is unhappy and complains about
             // a reading error (Lesefehler)
-            // anyway -- here it goes. response.2 is boolean for a request to 
-            // a static resource
+            // anyway -- here it goes. 
             if response.is_static { v_response.push(b'\n'); }
-
             v_response.append( &mut response.http_content );
 
             var_stream
@@ -464,12 +300,51 @@ async fn main() -> Result<(), Box<dyn std::error::Error>>{
 
             // @todo: A graceful shutdown would be nicer, but seems connected with 
             // channels or tokio::signal technology, i.e. more complex
-            if is_known_prefix && (spawned_apis.get( &prefix ).unwrap().lock().await.request).is_shutdown{ 
+            // @TODO: I don't get this code: a *reload* could be configured 
+            //        prefix-wise. But the shutdown is surely global. So 
+            //        is_known_prefix is wrong. But I also don't get why 
+            //        this request is retrieved through the API?
+            // @TODO This throws a panic for favicon (because  no prefix)
+            if (apis.get( &prefix ).unwrap().lock().await.request).is_shutdown{ 
                 info!("Shutting down on request.");
                 exit(0);
             }
         });
     } // LOOP
+}
+
+fn initialize_response_cache_per_context(pg_api_muscle_config: &Arc<MuscleConfigCommon>) -> HashMap<String, Arc<Mutex<ResponseCache>>> {
+    pg_api_muscle_config.contexts.values().map( | context | {
+        (context.prefix.to_owned(), Arc::new(Mutex::new(
+            ResponseCache::new()
+        )))
+    }).collect()
+}
+
+fn initialize_config_per_context(pg_api_muscle_config: &Arc<MuscleConfigCommon>) -> HashMap<String, Arc<Mutex<API>>> {
+    pg_api_muscle_config.contexts.values().map( | context | {
+        (context.prefix.to_owned(), Arc::new(Mutex::new(
+//            API::new( &muscle_config.addr, 
+            API::new( &pg_api_muscle_config.addr, 
+                &context.token_name, 
+                &context.pg_setvar_prefix, 
+                &context.api_conf,
+                context.use_eq_syntax_on_url_parameters
+        ))))
+    }).collect()
+}
+
+// 
+fn initialize_db_pool_per_context(pg_api_muscle_config: &Arc<MuscleConfigCommon>) -> HashMap<String, Pool> {
+    pg_api_muscle_config.contexts.values().map(|context | {
+        let mut deadpool_config = Config::new();
+        deadpool_config.dbname = Some(context.db.to_string());
+        deadpool_config.user = Some(context.db_user.to_string());
+        deadpool_config.password = Some(context.db_pass.to_string());
+        deadpool_config.manager = Some(ManagerConfig { recycling_method: RecyclingMethod::Fast });
+
+        ( context.prefix.to_owned(), deadpool_config.create_pool(NoTls).unwrap() )
+    }).collect()
 }
 
 async fn read_request(chunksize: usize, read_timeout: Duration, var_stream: &mut VarStream) -> (String, usize) {

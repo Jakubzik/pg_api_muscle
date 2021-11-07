@@ -37,6 +37,7 @@
     "kapitel_meta_info": {
       "get": {
         "operationId": "web_api.kapitel_meta_info",
+        "x-cache-lifetime": "0",
         "parameters": [
           {
             "name": "kapitel_id",

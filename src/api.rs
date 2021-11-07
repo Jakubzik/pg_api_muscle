@@ -204,7 +204,7 @@ impl API{
         // ----------------------------------------------------------------------
         // Interface: Make sure a request is present 
         if !self.request_set { 
-            error!("There is no request set to check against this API"); 
+            error!("There is no request set, cannot check query params."); 
             self.checked_query_parameters = vec![];
             // @TODO: consider panic? process.exit(1)?
             return &self.checked_query_parameters;
@@ -216,6 +216,27 @@ impl API{
         &self.checked_query_parameters
     }
     
+    pub fn get_cache_lifetime( &mut self ) -> u8{
+        if !self.request_set { 
+            error!("There is no request set, cannot look up cache lifetime."); 
+            return 0;
+        };
+        let s_method = Request::get_method_as_str( self.request.method );
+        let s_path = &self.request.get_url_dynamic_residue();
+        match serde_json::from_value( self.routing_json[ API::API_PATHS ]
+                [ s_path ]
+                [ s_method ]  // <- @todo look at x-query-post-as-get osä
+                [ "x-cache-lifetime" ].to_owned() ){
+                    Ok( val ) => {
+                        debug!("Cache/API: looking up this request's lifetime brought an actual result: {} secs.", val);
+                        val} ,
+                    _ => {
+                        debug!("Cache/API: looking up this request's lifetime brought NO result");
+                        0
+                    }
+        }
+    }
+
     /// Get a list of payload parameters in this POST or PATCH
     /// request that conform to the API.
     pub fn get_checked_post_params( &mut self ) -> &Vec<CheckedParam>{
